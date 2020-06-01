@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Whiteboard</title>
+    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.13.0/css/all.min.css"/>
+    <link rel="stylesheet" type="text/css" href="res/style.css"/>
+    <!--script type="text/javascript" src="https://underscorejs.org/underscore.js"></script-->
+    <script type="text/javascript" src="res/whiteboard.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="toolbar">
+        <div class="button" id="undo" title="Undo [Ctrl+Z]"  disabled><i class="fas fa-undo-alt"></i></div>
+        <div class="button" id="redo" title="Redo [Ctrl+Shift+Z]" disabled><i class="fas fa-redo-alt"></i></div>
+        <hr/>
+        <div class="button" id="pencil" title="Pencil" active><i class="fas fa-pencil-alt"></i></div>
+        <div class="button" id="eraser" title="[WIP] Eraser"><i class="fas fa-eraser"></i></div>
+        <div class="button" id="move" title="[WIP] Move"><i class="fas fa-arrows-alt"></i></div>
+        <hr/>
+        <div class="button" id="clear" title="Clear Whiteboard"><i class="fas fa-trash-alt"></i></div>
+        <br/>
+        <div class="status" state="disconnected">
+          <i id="connected" class="fas fa-check-circle"></i>
+          <i id="loading" class="fas fa-spinner"></i>
+          <i id="disconnected" class="fas fa-exclamation-circle"></i>
+        </div>
+      </div>
+      <div class="whiteboard">
+        <div class="dialog-container">
+          <dialog id="dialog-clear">
+            <p>
+              Are you sure you want to clear the whiteboard?<br/>
+              This action is <u>irreversible</u>!
+            </p>
+            <input type="button" class="confirm" value="Yes"></input>
+            <input type="button" class="cancel" value="Cancel"></input>
+          </dialog>
+        </div>
+        <canvas width=600 height=600>
+          <p>Your browser either doesn't support HTML5 Canvas or you have disabled JavaScript</p>
+          <p>Both of these are hard requirements for this page to function.</p>
+        </canvas>
+      </div>
+    </div>
+  </body>
+</html>

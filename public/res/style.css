@@ -1,0 +1,159 @@
+/**
+ * BASIC STYLE
+ */
+
+body {
+	font-family: Ubuntu, sans-serif;
+	text-align: center;
+	margin: 0 !important;
+	min-height: 100vh;
+}
+h1 {
+	font-size: 4em;
+}
+h2 {
+	font-size: 3em;
+	color: lightgrey;
+}
+
+/**
+ * WHITEBOARD
+ */
+
+:root {
+	--button-size: 56px;
+}
+
+.container {
+	height: 100vh;
+	display: grid;
+	grid-template-columns: auto 1fr;
+}
+
+.toolbar {
+	display: flex;
+	flex-flow: column;
+	grid-gap: 6px;
+	padding: 6px 0;
+
+	background: #eee;
+	border-right: 2px solid #333;
+}
+.toolbar hr {
+	margin: 0;
+}
+
+.button {
+	width: var(--button-size);
+	height: var(--button-size);
+	
+	font-size: 2em;
+	line-height: var(--button-size);
+	text-align: center;
+	vertical-align: middle;
+	
+	color: #fff;
+
+	margin: 0 6px;
+	
+	cursor: pointer;
+
+	border-radius: 8px;
+	box-shadow: #333 0 0 2px;
+
+	background: #333;
+}
+.wip {
+	background: repeating-linear-gradient(-45deg, #333 0 6px, #ee3 6px 12px);
+	color: orange;
+}
+.button[disabled],
+.button[disabled]:hover {
+	cursor: unset;
+	
+	background: #777;
+}
+.button:hover {
+	background: #555;
+}
+.button[active] i {
+	color: #f92;
+}
+.button#clear:hover i {
+	color: #f24;
+}
+
+.status {
+	width: var(--button-size);
+	height: var(--button-size);
+
+	font-size: 3em;
+	line-height: var(--button-size);
+	text-align: center;
+	vertical-align: middle;
+
+	margin: 0 6px;
+	margin-top: auto;
+}
+.status i {
+	display: none;
+}
+.status i#connected {
+	color: #2e5;
+}
+.status i#loading {
+	color: #19e;
+	animation: rotate 2s linear infinite;
+}
+.status i#disconnected {
+	color: #f20;
+}
+.status[state="connected"] i#connected,
+.status[state="loading"] i#loading,
+.status[state="disconnected"] i#disconnected {
+	display: inline-block;
+}
+
+@keyframes rotate {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.whiteboard {
+	overflow: hidden;
+	contain: paint;
+}
+
+.dialog-container {
+	position: absolute;
+	left: 50%;
+}
+
+dialog:not([open]) {
+	display: none;
+}
+dialog {
+	display: block;
+	position: relative;
+	left: -50%;
+	top: 20px;
+
+	padding: 10px 20px;
+
+	border-radius: 8px;
+	border: solid 1px black;
+	box-shadow: #333 0 0 6px;
+	
+	background: white;
+}
+dialog p {
+	margin-top: 0;
+}
+
+canvas {
+	display: block;
+}
