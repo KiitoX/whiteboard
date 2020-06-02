@@ -22,6 +22,7 @@ h2 {
 
 :root {
 	--button-size: 56px;
+	--drawing-colour: #148;
 }
 
 .container {
@@ -41,6 +42,7 @@ h2 {
 }
 .toolbar hr {
 	margin: 0;
+	border: 1px dashed #aaa;
 }
 
 .button {
@@ -63,10 +65,6 @@ h2 {
 
 	background: #333;
 }
-.wip {
-	background: repeating-linear-gradient(-45deg, #333 0 6px, #ee3 6px 12px);
-	color: orange;
-}
 .button[disabled],
 .button[disabled]:hover {
 	cursor: unset;
@@ -76,9 +74,15 @@ h2 {
 .button:hover {
 	background: #555;
 }
-.button[active] i {
-	color: #f92;
+.button[active] {
+	background: #fff;
+	color: #000;
 }
+
+.button#colour {
+	background: var(--drawing-colour);
+}
+
 .button#clear:hover i {
 	color: #f24;
 }
@@ -130,28 +134,86 @@ h2 {
 
 .dialog-container {
 	position: absolute;
-	left: 50%;
+	width: 100%;
+	height: 100%;
+	
+	display: flex;
+
+	pointer-events: none;
 }
 
 dialog:not([open]) {
 	display: none;
 }
 dialog {
-	display: block;
-	position: relative;
-	left: -50%;
-	top: 20px;
+	display: grid;
+	grid-gap: 10px;
 
-	padding: 10px 20px;
-
-	border-radius: 8px;
-	border: solid 1px black;
-	box-shadow: #333 0 0 6px;
+	pointer-events: all;
 	
 	background: white;
+	border: solid 1px black;
 }
-dialog p {
-	margin-top: 0;
+dialog#dialog-colour {
+	grid-template-columns: auto 2fr auto;
+
+	margin-left: 0;
+	margin-top: 61px;
+	padding: 10px;
+
+	border-left: none;
+	border-radius: 0 4px 4px 0;
+	box-shadow: #333 0 0 4px;
+}
+dialog#dialog-colour #colour-preview {
+	grid-column: span 3;
+
+	height: 80px;
+	
+	border-radius: 8px;
+	box-shadow: #333 0 0 2px;
+	
+	background: var(--drawing-colour);
+}
+dialog#dialog-colour label {
+	font-family: monospace;
+	line-height: 22px;
+}
+dialog#dialog-colour input[type="text"] {
+	grid-column: span 3;
+	font-family: monospace;
+}
+dialog#dialog-colour #colour-palette {
+	grid-column: span 3;
+
+	display: grid;
+	grid-gap: 10px;
+	grid-template-columns: repeat(4, auto);
+}
+dialog#dialog-colour .button {
+	--button-size: 48px;
+	margin: 0;
+	background: var(--colour);
+}
+dialog#dialog-clear {
+	margin-top: 20px;
+	padding: 10px 20px;
+
+	grid-template-columns: 1fr 1fr;
+
+	border-radius: 8px;
+	box-shadow: #333 0 0 6px;
+}
+dialog#dialog-clear p {
+	margin: 0;
+	grid-column: 1 / 3;
+}
+dialog#dialog-clear button {
+	font-size: 1.2em;
+	font-weight: bold;
+}
+dialog#dialog-clear button#confirm-clear {
+	color: #d00;
 }
 
 canvas {

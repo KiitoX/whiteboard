@@ -14,8 +14,9 @@
         <div class="button" id="redo" title="Redo [Ctrl+Shift+Z]" disabled><i class="fas fa-redo-alt"></i></div>
         <hr/>
         <div class="button" id="pencil" title="Pencil" active><i class="fas fa-pencil-alt"></i></div>
-        <div class="button" id="eraser" title="[WIP] Eraser"><i class="fas fa-eraser"></i></div>
-        <div class="button" id="move" title="[WIP] Move"><i class="fas fa-arrows-alt"></i></div>
+        <div class="button" id="colour" title="Select colour"></div>
+        <div class="button" id="eraser" title="Eraser"><i class="fas fa-eraser"></i></div>
+        <div class="button" id="move" title="Move"><i class="fas fa-arrows-alt"></i></div>
         <hr/>
         <div class="button" id="clear" title="Clear Whiteboard"><i class="fas fa-trash-alt"></i></div>
         <br/>
@@ -27,13 +28,36 @@
       </div>
       <div class="whiteboard">
         <div class="dialog-container">
+          <dialog id="dialog-colour">
+            <div id="colour-palette">
+              <div class="button" style="--colour: #000"></div> 
+              <div class="button" style="--colour: #148"></div> 
+              <div class="button" style="--colour: #184"></div> 
+              <div class="button" style="--colour: #d00"></div> 
+              <div class="button" style="--colour: #666"></div> 
+              <div class="button" style="--colour: #48e"></div> 
+              <div class="button" style="--colour: #4c0"></div> 
+              <div class="button" style="--colour: #e90"></div> 
+            </div>
+            <div id="colour-preview"></div>
+            <label for="red">R:</label>
+            <input type="range" name="red" id="range-red" min="0" max="255" value="17"/>
+            <label for="red" id="value-red">&nbsp;17</label>
+            <label for="green">G:</label>
+            <input type="range" name="green" id="range-green" min="0" max="255" value="68"/>
+            <label for="green" id="value-green">&nbsp;68</label>
+            <label for="blue">B:</label>
+            <input type="range" name="blue" id="range-blue" min="0" max="255" value="136"/>
+            <label for="blue" id="value-blue">136</label>
+            <input type="text" id="manual-colour" title="[Return] to confirm manual input"/>
+          </dialog>
           <dialog id="dialog-clear">
             <p>
               Are you sure you want to clear the whiteboard?<br/>
               This action is <u>irreversible</u>!
             </p>
-            <input type="button" class="confirm" value="Yes"></input>
-            <input type="button" class="cancel" value="Cancel"></input>
+            <button id="confirm-clear">Clear</button>
+            <button id="cancel-clear">Cancel</button>
           </dialog>
         </div>
         <canvas width=600 height=600>

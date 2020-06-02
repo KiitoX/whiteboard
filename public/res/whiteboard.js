@@ -15,6 +15,21 @@ function throttle(timeout, func) {
 	return run;
 }
 
+function debounce(delay, func) {
+	let timeout;
+	let later = function() {
+		timeout = null;
+		func();
+	};
+	let run = function() {
+		if (timeout) {
+			window.clearTimeout(timeout);
+		}
+		timeout = window.setTimeout(later, delay);
+	};
+	return run;
+}
+
 // ""proper"" modulo function, sign of divisor is used
 function fmod(a, n) {
 	return a - n * Math.floor(a / n);
@@ -28,18 +43,14 @@ let state = {
 	activeTool: 'pencil',
 	toolInUse: null, // "move" OR "active"
 	ongoing: {
-		// client_id: [ongoing drawing data]
+		// client_id: {
+		//   body: [ongoing drawing data]
+		//   colour: '#rrggbb'
+		// }
 	},
 	local: function() {
 		return state.ongoing[state.whoami];
 	},
-	eraseBox: {
-		lower_x: 0,
-		upper_x: 0,
-		lower_y: 0,
-		upper_y: 0,
-	},
-	eraseLine: [],
 	elements: {
 		// element_id: [element properties]
 	},
@@ -53,37 +64,40 @@ let state = {
 
 
 let tools = {
+	drawingColour: '#148',
 	pencil: {
 		previousLength: 0,
 		shareOngoing: throttle(20/* ms */, function() {
-			sendMessage("drawing", state.local().slice(tools.pencil.previousLength));
-			tools.pencil.previousLength = state.local().length;
+			let data = {
+				body: state.local().body.slice(tools.pencil.previousLength),
+				colour: state.local().colour,
+			};
+			sendMessage('drawing', data);
+			tools.pencil.previousLength = state.local().body.length;
 		}),
 		onDown: function(evt) {
 			// TODO differentiate type
-			//state.local().push('smooth');
-			state.local().push(
-				evt.offsetX - context.offsetX, evt.offsetY - context.offsetY);
+			//state.local().type = 'smooth';
+			state.local().colour = tools.drawingColour;
+			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
 		},
 		onMove: function(evt) {
-			state.local().push(
-				evt.offsetX - context.offsetX, evt.offsetY - context.offsetY);
+			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
 			tools.pencil.shareOngoing();
 		},
 		onUp: function(evt) {
-			state.local().push(
-				evt.offsetX - context.offsetX, evt.offsetY - context.offsetY);
-			add(state.local());
-			state.local().length = 0;
+			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
+			//TODO again, type
+			add(state.local().body);
+			state.local().body.length = 0;
 			tools.pencil.previousLength = 0;
 		},
 	},
 	eraser: {
 		findMatches: throttle(20/* ms */, function() {
-			let lastPt = state.local().slice(-2);
-			sendMessage("query", state.local());
-			state.local().length = 0;
-			state.local().push(...lastPt);
+			sendMessage('query', state.local().body);
+			// only keep last point
+			state.local().body = state.local().body.slice(-2);
 		}),
 		findIntersections: function(eraser, matchingIds) {
 			let intersects = [];
@@ -104,23 +118,17 @@ let tools = {
 			}
 		},
 		onDown: function(evt) {
-			let ptX = evt.offsetX - context.offsetX;
-			let ptY = evt.offsetY - context.offsetY;
-			state.local().push(ptX, ptY);
+			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
 		},
 		onMove: function(evt) {
-			let ptX = evt.offsetX - context.offsetX;
-			let ptY = evt.offsetY - context.offsetY;
-			state.local().push(ptX, ptY);
+			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
 			tools.eraser.findMatches();
 		},
 		onUp: function(evt) {
 			const ERASE_THRESHOLD = 2;
-			let ptX = evt.offsetX - context.offsetX;
-			let ptY = evt.offsetY - context.offsetY;
-			state.local().push(ptX, ptY);
-			sendMessage("query", state.local());
-			state.local().length = 0;
+			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
+			sendMessage('query', state.local().body);
+			state.local().body.length = 0;
 		},
 	},
 	move: {
@@ -167,20 +175,30 @@ function handleSocketError(evt) {
 	document.querySelector('.status').setAttribute('state', 'disconnected');
 }
 
-function receiveMessage(evt) {
+let acknowledgeReturn = debounce(100, function() {
 	document.querySelector('.status').setAttribute('state', 'connected');
+});
+
+function receiveMessage(evt) {
+	acknowledgeReturn();
 	let message = JSON.parse(evt.data);
 	if (message.type === 'identify') {
 		state.whoami = message.data;
 	} else if (message.type === 'all_clients') {
 		state.clients = new Set(message.data);
-		state.clients.forEach(function(client) {
-			state.ongoing[client] = [];
-		});
+		for (let client of state.clients) {
+			state.ongoing[client] = {
+				body: [],
+				colour: '#148',
+			};
+		}
 		// TODO clear/prune ongoing??
 	} else if (message.type === 'client_joined') {
 		state.clients.add(message.data);
-		state.ongoing[message.data] = [];
+		state.ongoing[message.data] = {
+			body: [],
+			colour: '#148',
+		};
 	} else if (message.type === 'client_left') {
 		state.clients.delete(message.data);
 		delete state.ongoing[message.data];
@@ -195,9 +213,10 @@ function receiveMessage(evt) {
 		}
 		*/
 		message.data.forEach(function(element) {
-			// [id, type, "content"]
-			state.elements[element[0]] = {type: element[1], body: JSON.parse(element[2])};
+			// [id, type, "content", bounds...]
+			state.elements[element[0]] = JSON.parse(element[2]);
 		});
+		context.needRedraw = true;
 	} else if (message.type === 'added') {
 		state.elements[message.data.id] = message.data.properties;
 		if (message.origin === state.whoami) {
@@ -209,8 +228,9 @@ function receiveMessage(evt) {
 			}
 			updateState();
 		} else {
-			state.ongoing[message.origin].length = 0;
+			state.ongoing[message.origin].body.length = 0;
 		}
+		context.needRedraw = true;
 	} else if (message.type === 'deleted') {
 		if (message.origin === state.whoami) {
 			let action = {type: 'deleted', data: state.elements[message.data.id]};
@@ -226,19 +246,24 @@ function receiveMessage(evt) {
 			// of an element, to make this less guesswork
 		}
 		delete state.elements[message.data.id];
+		context.needRedraw = true;
 	} else if (message.type === 'cleared') {
 		// TODO clear ongoing ???
 		state.elements = {};
 		state.undostack = [];
 		state.redostack = [];
 		updateState();
+		context.needRedraw = true;
 	} else if (message.type === 'ongoing') {
 		if (message.origin !== state.whoami) {
+			state.ongoing[message.origin].colour = message.data.colour;
 			Array.prototype.push.apply(
-				state.ongoing[message.origin], message.data);
+				state.ongoing[message.origin].body, message.data.body);
 		}
+		context.needRedraw = true;
 	} else if (message.type === 'matches') {
 		tools.eraser.findIntersections(message.data.line, message.data.ids);
+		context.needRedraw = true;
 	} else {
 		console.log("unsupported message", message);
 	}
@@ -257,8 +282,10 @@ let context = {
 	offsetX: 0,
 	offsetY: 0,
 	scale: 1,
-	mouseX: 0,
-	mouseY: 0,
+	abs: function(x, y) {
+		return [(x - context.offsetX) / context.scale, (y - context.offsetY) / context.scale];
+	},
+	needRedraw: true,
 };
 
 function init() {
@@ -272,11 +299,15 @@ function init() {
 	// prevent context menu
 	canvas.addEventListener('contextmenu', function(evt) {evt.preventDefault()});
 	
-	// register mouse input handler
+	// register canvas input handler
 	canvas.addEventListener('pointerdown', handlePointer);
 	canvas.addEventListener('pointerup', handlePointer);
 	canvas.addEventListener('pointerout', handlePointer);
 	canvas.addEventListener('pointermove', handlePointer);
+	canvas.addEventListener('wheel', handleWheel);
+
+	// add keypress listener
+	document.addEventListener('keydown', handleKeyDown);
 
 	// register button handlers
 	document.querySelector('#undo').addEventListener('click', undo);
@@ -285,10 +316,22 @@ function init() {
 	document.querySelector('#pencil').addEventListener('click', changeTool);
 	document.querySelector('#eraser').addEventListener('click', changeTool);
 	document.querySelector('#move').addEventListener('click', changeTool);
+	
+	document.querySelector('#colour').addEventListener('click', toggleColourSelector);
+	document.querySelector('#range-red').addEventListener('input', updateColour);
+	document.querySelector('#range-green').addEventListener('input', updateColour);
+	document.querySelector('#range-blue').addEventListener('input', updateColour);
+	document.querySelector('#manual-colour').addEventListener('change', manualColour);
+
+	setDrawingColour('#148');
+
+	for (let button of document.querySelectorAll('#colour-palette .button')) {
+		button.addEventListener('click', selectColour);
+	}
 
 	document.querySelector('#clear').addEventListener('click', openClearConfirmation);
-	document.querySelector('#dialog-clear .confirm').addEventListener('click', clearWhiteboard);
-	document.querySelector('#dialog-clear .cancel').addEventListener('click', closeDialog);
+	document.querySelector('#dialog-clear #confirm-clear').addEventListener('click', clearWhiteboard);
+	document.querySelector('#dialog-clear #cancel-clear').addEventListener('click', closeDialog);
 
 	updateState();
 
@@ -337,7 +380,7 @@ function redo(evt) {
 }
 
 function add(element) {
-	sendMessage('add', {type: 'smooth', undo: false, body: element});
+	sendMessage('add', {type: 'smooth', undo: false, body: element, colour: state.local().colour});
 	state.redostack.length = 0;
 	updateState();
 }
@@ -362,6 +405,61 @@ function closeDialog(evt) {
 	dialog.removeAttribute('open');
 }
 
+function toggleColourSelector(evt) {
+	document.querySelector('#dialog-colour').toggleAttribute('open');
+}
+function setDrawingColour(colour) {
+	document.documentElement.style.setProperty('--drawing-colour', colour);
+
+	let style = getComputedStyle(document.querySelector('#colour-preview'));
+	let bg = style.getPropertyValue('background-color');
+	let rgb = bg.match(/\d+/g).slice(0,3);
+
+	let r = Number(rgb[0]);
+	let g = Number(rgb[1]);
+	let b = Number(rgb[2]);
+	
+	let r0 = ('\xa0\xa0' + r).slice(-3);
+	let g0 = ('\xa0\xa0' + g).slice(-3);
+	let b0 = ('\xa0\xa0' + b).slice(-3);
+
+	let rX = ('0' + r.toString(16)).slice(-2);
+	let gX = ('0' + g.toString(16)).slice(-2);
+	let bX = ('0' + b.toString(16)).slice(-2);
+	let hex = `#${rX}${gX}${bX}`;
+
+	document.querySelector('#range-red').value = r;
+	document.querySelector('#value-red').textContent = r0;
+	document.querySelector('#range-green').value = g;
+	document.querySelector('#value-green').textContent = g0;
+	document.querySelector('#range-blue').value = b;
+	document.querySelector('#value-blue').textContent = b0;
+
+	tools.drawingColour = hex;
+	document.documentElement.style.setProperty('--drawing-colour', hex);
+	document.querySelector('#manual-colour').value = hex
+}
+function manualColour(evt) {
+	let colour = evt.currentTarget.value;
+	setDrawingColour(colour);
+}
+function selectColour(evt) {
+	let colour = evt.currentTarget.style.getPropertyValue('--colour');
+	setDrawingColour(colour);
+}
+function updateColour(evt) {
+	let rangeR = document.querySelector('#range-red');
+	let rangeG = document.querySelector('#range-green');
+	let rangeB = document.querySelector('#range-blue');
+
+	let r = Number(rangeR.value);
+	let g = Number(rangeG.value);
+	let b = Number(rangeB.value);
+	let rgb = `rgb(${r} ${g} ${b})`;
+
+	setDrawingColour(rgb);
+}
+
 function changeTool(evt) {
 	let activeTool = document.querySelector('[active]');
 	activeTool.removeAttribute('active');
@@ -373,28 +471,71 @@ function handlePointer(evt) {
 	evt.preventDefault();
 	
 	if (evt.type === 'pointermove') {
-		context.mouseX = evt.offsetX;
-		context.mouseY = evt.offsetY;
 		if (state.toolInUse === 'active') {
 			tools[state.activeTool].onMove(evt);
+			context.needRedraw = true;
 		} else if (state.toolInUse === 'move') {
 			tools.move.onMove(evt);
+			context.needRedraw = true;
 		}
 	} else if (evt.type === 'pointerdown') {
 		if (evt.button === 0) {
 			state.toolInUse = 'active';
 			tools[state.activeTool].onDown(evt);
+			context.needRedraw = true;
 		} else if (evt.button === 2) {
 			state.toolInUse = 'move';
 			tools.move.onDown(evt);
+			context.needRedraw = true;
 		}
 	} else if (evt.type === 'pointerup' || evt.type === 'pointerout') {
 		if (state.toolInUse === 'active') {
 			state.toolInUse = null;
 			tools[state.activeTool].onUp(evt);
+			context.needRedraw = true;
 		} else if (state.toolInUse === 'move') {
 			state.toolInUse = null;
 			tools.move.onUp(evt);
+			context.needRedraw = true;
+		}
+	}
+}
+
+function handleWheel(evt) {
+	// we don't really want to care about the amount of lines scrolled
+	// that is fairly setup specific, so we only use the wheel direction
+	let direction = Math.sign(evt.deltaY);
+	let newScale = context.scale / Math.pow(2, direction);
+	newScale = Math.max(0.25, Math.min(newScale, 4.0));
+
+	let oX = evt.currentTarget.width / 2, oY = evt.currentTarget.height / 2;
+	let tX = context.offsetX, tY = context.offsetY;
+	
+	if (state.toolInUse === 'active' || evt.shiftKey) {
+		let mX = evt.offsetX, mY = evt.offsetY; // mouse coordinates on canvas
+		oX = mX;
+		oY = mY;
+	}
+
+	// my legendary "scroll-at-mouse-position" code I wrote a few years back
+	// which I have been copying around ever since, adapted here to zoom at center
+	// Zoom position adjustment: (new pos - prev pos) * scale
+	context.offsetX += (((oX - tX) / newScale) - ((oX - tX) / context.scale)) * newScale;
+	context.offsetY += (((oY - tY) / newScale) - ((oY - tY) / context.scale)) * newScale;
+
+	context.scale = newScale;
+	
+	context.needRedraw = true;
+}
+
+function handleKeyDown(evt) {
+	if (evt.target !== document.querySelector('#manual-colour')) {
+		if (evt.ctrlKey) {
+			if (evt.key === 'z') {
+				undo({currentTarget: document.querySelector('#undo')});
+			} else if (evt.key === 'Z') {
+				redo({currentTarget: document.querySelector('#redo')});
+			}
 		}
 	}
 }
@@ -405,6 +546,8 @@ function handleResize(evt) {
 
 	canvas.width = whiteboard.clientWidth;
 	canvas.height = whiteboard.clientHeight;
+	
+	context.needRedraw = true;
 }
 
 
@@ -415,7 +558,7 @@ let getIntersection = {
 
 		// element forms a point
 		if (points.length === 4 && points[0] === points[2] && points[1] === points[3]) {
-			return getIntersection.point(line, points);
+			return getIntersection.point(eraser, points);
 		}
 
 		// eraser forms a point
@@ -471,7 +614,6 @@ let getIntersection = {
 				let max = 1 + LINE_THRESHOLD / det;
 				if (min <= lu && lu <= max
 					&& min <= su && su <= max) {
-					console.log(lu, su);
 					return true;
 				}
 			}
@@ -523,9 +665,14 @@ let drawObject = {
 	},
 };
 
-let flag = true;
-
 function draw() {
+	if (!context.needRedraw) {
+		// check again next frame
+		window.requestAnimationFrame(draw);
+		return;
+	}
+	context.needRedraw = false;
+
 	let ctx = context.ref;
 	let w = context.canvas.width;
 	let h = context.canvas.height;
@@ -533,34 +680,22 @@ function draw() {
 	ctx.resetTransform();
 
 	// clear canvas
-	if (true /* clear */) {
-		ctx.fillStyle = '#fff';
-		ctx.fillRect(0, 0, w, h);
-	}
-
-	ctx.fillStyle = '#000';
-	ctx.font = '20px serif';
-	ctx.fillText(`${context.mouseX - context.offsetX}, ${context.mouseY - context.offsetY}`, 0, 30);
+	ctx.fillStyle = '#fff';
+	ctx.fillRect(0, 0, w, h);
 
 	// translate position
 	ctx.translate(context.offsetX, context.offsetY);
 
-	// draw update indicator
-	if (flag) {
-		ctx.fillStyle = '#f00';
-	} else {
-		ctx.fillStyle = '#00f';
-	}
-	flag = !flag;
-	ctx.fillRect(0, 0, 10, 10);
-
 	// draw grid
 	ctx.strokeStyle = '#ccc';
 
-	let gridSize = 30;
+	let gridSize = 30 * context.scale;
+	let gridLineWidth = 1 * context.scale;
+	let divisionLineWidth = 2 * context.scale;
 	let gridDivisionSize = 2;
 
-	ctx.lineWidth = 1;
+	// vertical lines
+	ctx.lineWidth = gridLineWidth;
 	for (let i = 0, x = fmod(context.offsetX, gridSize); x < w; i++, x += gridSize) {
 		ctx.beginPath();
 		ctx.moveTo(x - context.offsetX, 0 - context.offsetY);
@@ -568,12 +703,13 @@ function draw() {
 		ctx.stroke();
 	}
 
+	// horizontal lines
 	let gridDivision = fmod(Math.floor(context.offsetY / gridSize), gridDivisionSize);
 	for (let j = 0, y = fmod(context.offsetY, gridSize); y < h; j++, y += gridSize) {
 		if (j % gridDivisionSize === gridDivision) {
-			ctx.lineWidth = 2;
+			ctx.lineWidth = divisionLineWidth;
 		} else {
-			ctx.lineWidth = 1;
+			ctx.lineWidth = gridLineWidth;
 		}
 		ctx.beginPath();
 		ctx.moveTo(0 - context.offsetX, y - context.offsetY);
@@ -581,27 +717,33 @@ function draw() {
 		ctx.stroke();
 	}
 
+	// scale content
+	ctx.scale(context.scale, context.scale);
+
 	// draw content
 	ctx.lineWidth = 3;
 	ctx.lineJoin = 'round';
 	ctx.lineCap = 'round';
-	ctx.strokeStyle = '#148';
-	ctx.fillStyle = '#2e4';
 	
 	for (const [id, element] of Object.entries(state.elements)) {
+		ctx.strokeStyle = element.colour;
+		ctx.fillStyle = element.colour;
 		drawObject[element.type](ctx, element.body);
 	}
 
 	for (const [client, element] of Object.entries(state.ongoing)) {
-		if (Number(client) === state.whoami && state.activeTool === "eraser") {
-			continue; // skip drawing own line if we're using ongoing for erasing purposes
+		if (Number(client) === state.whoami) {
+			if (state.activeTool === 'eraser') {
+				continue; // skip drawing own line if we're using ongoing for erasing purposes
+			}
 		}
-		if (element.length >= 2) {
-			drawObject.smooth(ctx, element);
+		if (element.body.length >= 2) {
+			ctx.strokeStyle = element.colour;
+			ctx.fillStyle = element.colour;
+			drawObject.smooth(ctx, element.body);
 		}
 	}
 
 	// redraw on next frame
-	// TODO really only redraw when it's necessary, this should not be /too/ too hard
 	window.requestAnimationFrame(draw);
 }

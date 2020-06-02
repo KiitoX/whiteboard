@@ -50,6 +50,13 @@ async def send_to_all(url, msg_type, msg_data, client_id):
 async def add_client(url, client):
     if url not in connected_clients:
         connected_clients[url] = set()
+        db = db_connection.cursor()
+        db.execute("SELECT id FROM boards WHERE identifier=%s", (url[1:],))
+        res = db.fetchall()
+        if not res:
+            # reject client, board does not exist
+            logging.info("client " + str(hash(client)) + " tried to connect to nonexistent path " + url)
+            await client.close()
     else:
         await send_to_all(url, "client_joined", hash(client), "")
     connected_clients[url].add(client)
@@ -161,12 +168,12 @@ async def manage_state(client, path):
     url = urllib.parse.urlparse(path)
     logging.info("client " + str(hash(client)) + " connected at " + url.path)
     await add_client(url.path, client)
-    await send_identity(client)
-    await send_state(url.path, client)
     try:
+        await send_identity(client)
+        await send_state(url.path, client)
         async for message in client:
             await handle_message(url.path, client, message)
-    except websockets.ConnectionClosedError:
+    except websockets.ConnectionClosedOK:
         pass # this is fine and expected
     finally:
         logging.info("client " + str(hash(client)) + " disconnected at " + url.path)
