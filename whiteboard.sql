@@ -1,3 +1,10 @@
+/* user permissions */
+CREATE USER `whiteboard`@`localhost` IDENTIFIED VIA mysql_native_password OR unix_socket;
+GRANT SELECT ON `whiteboard`.* TO `whiteboard`@`localhost`;
+GRANT INSERT ON `whiteboard`.`boards` TO `whiteboard`@`localhost`;
+GRANT INSERT, DELETE ON `whiteboard`.`contents` TO `whiteboard`@`localhost`;
+
+/* database and table creation */
 CREATE DATABASE `whiteboard`;
 
 USE `whiteboard`;
