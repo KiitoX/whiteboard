@@ -1,0 +1,11 @@
+[Unit]
+Description=Whiteboard Websocket daemon
+After=mysqld.service httpd.Service
+Requisite=mysqld.service
+
+[Service]
+Restart=on-failure
+ExecStart=/usr/bin/python3 /srv/cgi-bin/whiteboard-ws.py
+
+[Install]
+WantedBy=multi-user.target
