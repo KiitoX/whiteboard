@@ -49,14 +49,17 @@ async def send_to_all(url, msg_type, msg_data, client_id):
 
 async def add_client(url, client):
     if url not in connected_clients:
-        connected_clients[url] = set()
+        db_connection.ping(reconnect=True)
         db = db_connection.cursor()
         db.execute("SELECT id FROM boards WHERE identifier=%s", (url[1:],))
         res = db.fetchall()
-        if not res:
+        if res:
+            connected_clients[url] = set()
+        else:
             # reject client, board does not exist
             logging.info("client " + str(hash(client)) + " tried to connect to nonexistent path " + url)
             await client.close()
+            await client.ping()
     else:
         await send_to_all(url, "client_joined", hash(client), "")
     connected_clients[url].add(client)
@@ -112,13 +115,20 @@ async def handle_message(url, client, message):
         lower_y = min(body[1::2])
         upper_y = max(body[1::2])
 
+        message["data"]["bounds"] = {
+                "lower_x": lower_x,
+                "upper_x": upper_x,
+                "lower_y": lower_y,
+                "upper_y": upper_y,
+        }
+        
         db.execute("""\
                 INSERT INTO contents SET \
                 board_id=(SELECT id FROM boards WHERE identifier=%s),\
                 type_id=(SELECT id FROM types WHERE name=%s),\
                 bounds_lower_x=%s, bounds_upper_x=%s,
                 bounds_lower_y=%s, bounds_upper_y=%s,
-                content=%s""", (url[1:], type_, lower_x, upper_x, lower_y, upper_y, json.dumps(body)))
+                content=%s""", (url[1:], type_, lower_x, upper_x, lower_y, upper_y, json.dumps(message["data"])))
 
         db.execute("SELECT LAST_INSERT_ID()")
         element_id, = db.fetchone()
@@ -142,42 +152,89 @@ async def handle_message(url, client, message):
                 board_id=(SELECT id FROM boards WHERE identifier=%s)""", (url[1:],))
         await send_to_all(url, "cleared", "", "")
     elif message["type"] == "query":
-        body = message["data"]
+        body = message["data"]["body"]
+        padding = message["data"]["padding"]
+        type_ = message["data"]["type"]
+        contain = message["data"]["contain"]
+
+        lower_x = min(body[0::2]) - padding
+        upper_x = max(body[0::2]) + padding
+        lower_y = min(body[1::2]) - padding
+        upper_y = max(body[1::2]) + padding
         
-        lower_x = min(body[0::2]) - 2
-        upper_x = max(body[0::2]) + 2
-        lower_y = min(body[1::2]) - 2
-        upper_y = max(body[1::2]) + 2
+        bounds = {
+                "lower_x": lower_x,
+                "upper_x": upper_x,
+                "lower_y": lower_y,
+                "upper_y": upper_y,
+        }
         
-        db.execute("""\
-                SELECT id FROM contents WHERE \
-                board_id=(SELECT id FROM boards WHERE identifier=%s) \
-                AND bounds_lower_x <= %s AND bounds_upper_x >= %s \
-                AND bounds_lower_y <= %s AND bounds_upper_y >= %s""",
-                (url[1:], upper_x, lower_x, upper_y, lower_y))
+        if contain:
+            db.execute("""\
+                    SELECT id FROM contents WHERE \
+                    board_id=(SELECT id FROM boards WHERE identifier=%s) \
+                    AND %s <= bounds_lower_x AND bounds_upper_x <= %s \
+                    AND %s <= bounds_lower_y AND bounds_upper_y <= %s""",
+                    (url[1:], lower_x, upper_x, lower_y, upper_y))
+        else:
+            db.execute("""\
+                    SELECT id FROM contents WHERE \
+                    board_id=(SELECT id FROM boards WHERE identifier=%s) \
+                    AND bounds_lower_x <= %s AND bounds_upper_x >= %s \
+                    AND bounds_lower_y <= %s AND bounds_upper_y >= %s""",
+                    (url[1:], upper_x, lower_x, upper_y, lower_y))
 
         matching_ids = list(id_ for (id_,) in db.fetchall())
 
-        message = json.dumps({"type": "matches", "data": {"line": body, "ids": matching_ids}})
+        message = json.dumps({"type": "matches", "data": {"type": type_, "line": body, "bounds": bounds, "ids": matching_ids}})
         await client.send(message)
     else:
         logging.error("unsupported method: {}", message)
 
 
+async def send_debug(client):
+    message = json.dumps({"active":
+        dict((path[1:], list((cli.request_headers["x-forwarded-for"]
+                if "x-forwarded-for" in cli.request_headers else cli.remote_address[0]) for cli in clients))
+            for path, clients in connected_clients.items())})
+    await client.send(message)
+
+
 async def manage_state(client, path):
-    url = urllib.parse.urlparse(path)
-    logging.info("client " + str(hash(client)) + " connected at " + url.path)
-    await add_client(url.path, client)
     try:
+        url = urllib.parse.urlparse(path)
+        if url.path == "/status":
+            remote = client.remote_address[0]
+            local = client.local_address[0]
+            if remote == local:
+                # this is usually a bad idea, but it's only kinda sharing
+                # sensitive data, and since we use a local wss proxy
+                # there isn't a much better way
+                # though I could connect to :26273 directly, then I have
+                # to distinguish proxied requests from direct, so I'm back
+                # at square one. maybe it's harder to delete a header? idk though
+                if "x-forwarded-for" in client.request_headers:
+                    forward = client.request_headers["x-forwarded-for"]
+                else:
+                    forward = ""
+                if forward == local:
+                    await send_debug(client)
+                    await client.close()
+                    await client.ping()
+        await add_client(url.path, client)
+        logging.info("client " + str(hash(client)) + " connected at " + url.path)
         await send_identity(client)
         await send_state(url.path, client)
         async for message in client:
             await handle_message(url.path, client, message)
     except websockets.ConnectionClosedOK:
         pass # this is fine and expected
+    except websockets.ConnectionClosedError:
+        pass # here as well
     finally:
-        logging.info("client " + str(hash(client)) + " disconnected at " + url.path)
-        await remove_client(url.path, client)
+        if url.path in connected_clients and client in connected_clients[url.path]:
+            logging.info("client " + str(hash(client)) + " disconnected at " + url.path)
+            await remove_client(url.path, client)
 
 
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

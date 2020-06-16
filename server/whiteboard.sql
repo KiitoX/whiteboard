@@ -42,3 +42,12 @@ CREATE TABLE `types` (
 ) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `types` VALUES (1,'path'),(2,'smooth');
+
+/* cleanup event */
+/* this requires you enable the event scheduler */
+SET GLOBAL event_scheduler=ON;
+
+CREATE EVENT whiteboard_cull_empty ON SCHEDULE EVERY 8 HOUR DO
+  DELETE FROM boards WHERE
+    (SELECT COUNT(*) FROM contents WHERE board_id=boards.id) = 0
+	AND TIMESTAMPDIFF(HOUR, creation, current_timestamp()) > 24;
