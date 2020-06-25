@@ -26,6 +26,36 @@ h2 {
 	--button-size: 56px;
 	--drawing-colour: #148;
 	--drawing-size: 3px;
+
+	/* default colours */
+	--hover-border-colour: #64beed;
+
+	--negative-fg-colour: #da4453;
+	--loading-fg-colour: #3daee9;
+	--positive-fg-colour: #27ae60;
+}
+
+/* THEMES */
+body[theme=light] {
+	--bg-colour: #f3f4f4;
+	--fg-colour: #373737;
+	--border-colour: #bcbebf;
+	--active-bg-colour: #c9cbcb;
+	--hover-active-fg-colour: #373737;
+	--hover-active-bg-colour: #93cee9;
+	--disabled-bg-colour: #d9dadb;
+	--disabled-fg-colour: #7f8081;
+}
+
+body[theme=dark] {
+	--bg-colour: #2d3136;
+	--fg-colour: #c8c8c8;
+	--border-colour: #616569;
+	--active-bg-colour: #54575b;
+	--hover-active-fg-colour: #424345;
+	--hover-active-bg-colour: #3daee9;
+	--disabled-bg-colour: #2b2f33;
+	--disabled-fg-colour: #565b60;
 }
 
 .container {
@@ -35,15 +65,16 @@ h2 {
 	grid-template-columns: auto 1fr auto;
 }
 
-.toolbar {
+div.toolbar {
 	display: flex;
 	flex-flow: column;
 	
 	overflow-y: scroll;
 	scrollbar-width: none;
 
-	background: #eee;
-	border-right: 2px solid #333;
+	color: var(--fg-colour);
+	background-color: var(--bg-colour);
+	border-right: 1px solid var(--border-colour);
 }
 .toolbar::-webkit-scrollbar {
     display: none;
@@ -51,9 +82,10 @@ h2 {
 .toolbar hr {
 	margin: 0;
 	margin-top: 6px;
-	border: 1px dashed #aaa;
+	border: none;
+	border-top: 1px solid var(--border-colour);
 }
-.toolbar:after {
+div.toolbar:after {
 	/* ugly hack to get padding at the bottom in FF
 	 * works for other browsers but could be replaced with
 	 * padding-bottom in at least chrome 
@@ -70,49 +102,57 @@ button {
 	cursor: pointer;
 
 	border: none;
-	border-radius: 8px;
-	box-shadow: #333 0 0 2px;
+	border-radius: 4px;
 }
-.toolbar button,
-#dialog-select button {
+.toolbar button {
 	text-align: center;
 	vertical-align: middle;
 	
-	color: #fff;
-
 	flex: 0 0 auto;
 	margin: 6px;
 	margin-bottom: 0;
 	padding: 0;
-	overflow: hidden;
 
-	background: #333;
+	color: var(--fg-colour);
+	background-color: var(--bg-colour);
+	background-clip: border-box;
+	overflow: hidden;
+	
+	border: 1px solid transparent;
 }
-.toolbar button i ,
-#dialog-select button i {
-	margin-top: 8px;
-	font-size: 24px;
+.toolbar button::-moz-focus-inner {
+	border: 0;
 }
-.toolbar button p ,
-#dialog-select button p {
-	margin: 8px 0;
+.toolbar button i {
+	margin-top: 4px;
+
+	font-size: 33px;
+}
+.toolbar button p {
+	margin: 4px;
+	margin-top: 2px;
 
 	font-weight: 500;
 }
 .toolbar button[disabled],
 .toolbar button[disabled]:hover {
 	cursor: unset;
-	
-	background: #777;
+
+	color: var(--disabled-fg-colour);
+	background-color: var(--disabled-bg-colour);
+	border-color: transparent;
 }
 .toolbar button:hover,
-#dialog-select button:hover  {
-	background: #555;
+.toolbar button:focus,
+.toolbar button:active {
+	border-color: var(--hover-border-colour);
 }
-.toolbar button[active],
-#dialog-select button[active]  {
-	background: #fff;
-	color: #000;
+.toolbar button[active] {
+	background-color: var(--active-bg-colour);
+}
+.toolbar button[active]:hover {
+	color: var(--hover-active-fg-colour);
+	background-color: var(--hover-active-bg-colour);
 }
 button[wip] i {
 	background: repeating-linear-gradient(-35deg, orange 0px 3px, #333 3px 6px);
@@ -126,19 +166,24 @@ button[wip] i {
 }
 
 .toolbar button#size div {
-	background: radial-gradient(circle, #ffff calc(var(--drawing-size) / 2),
-										#3330 calc(var(--drawing-size) / 2 + 1px));
+	background: radial-gradient(circle, var(--fg-colour) calc(var(--drawing-size) / 2),
+										var(--bg-colour) calc(var(--drawing-size) / 2 + 1px));
 }
 
 .toolbar button#colour {
-	background: var(--drawing-colour);
+	color: #fff;
+	background-color: var(--drawing-colour);
 }
 .toolbar button#colour[bright] {
 	color: #000;
 }
 
 .toolbar button#clear:hover i {
-	color: #f24;
+	color: var(--negative-fg-colour);
+}
+
+.toolbar button#theme {
+	margin-top: auto;
 }
 
 .status {
@@ -161,14 +206,14 @@ button[wip] i {
 	display: none;
 }
 .status i#connected {
-	color: #2e5;
+	color: var(--positive-fg-colour);
 }
 .status i#loading {
-	color: #19e;
+	color: var(--loading-fg-colour);
 	animation: rotate 2s linear infinite;
 }
 .status i#disconnected {
-	color: #f20;
+	color: var(--negative-fg-colour);
 }
 .status[state="connected"] i#connected,
 .status[state="loading"] i#loading,
@@ -211,36 +256,38 @@ dialog {
 
 	pointer-events: all;
 	
-	background: white;
-	border: solid 1px black;
+	color: var(--fg-colour);
+	background: var(--bg-colour);
+	border: solid 1px var(--border-colour);
 }
-dialog#dialog-select {
+dialog.toolbar {
 	margin-left: 0;
-	margin-top: 0;
 	padding: 6px;
 	
 	border-left: none;
-	border-top: none;
-	border-radius: 0 0 4px 0;
 	box-shadow: #333 0 0 4px;
 }
-dialog#dialog-select button {
+dialog.toolbar button {
 	margin: 0;
 }
 
-dialog#dialog-size {
-	margin-left: 0;
-	margin-top: 102px;
-	padding: 6px;
+dialog#dialog-select {
+	margin-top: 0;
 	
-	border-left: none;
+	border-top: none;
+	border-radius: 0 0 4px 0;
+}
+
+dialog#dialog-size {
+	margin-top: 102px;
+	
 	border-radius: 0 4px 4px 0;
-	box-shadow: #333 0 0 4px;
 }
 dialog#dialog-size button {
-	background: radial-gradient(circle, #fff calc(var(--size) / 2),
-										#333 calc(var(--size) / 2 + 1px));
+	background: radial-gradient(circle, var(--fg-colour) calc(var(--size) / 2),
+										var(--bg-colour) calc(var(--size) / 2 + 1px));
 }
+
 dialog#dialog-colour {
 	grid-template-columns: auto 2fr auto;
 	column-gap: 2px;
@@ -257,9 +304,7 @@ dialog#dialog-colour #colour-preview {
 	grid-column: span 3;
 
 	height: 80px;
-	
 	border-radius: 8px;
-	box-shadow: #333 0 0 2px;
 	
 	background: var(--drawing-colour);
 }
@@ -282,6 +327,7 @@ dialog#dialog-colour button {
 	--button-size: 48px;
 	background: var(--colour);
 }
+
 dialog#dialog-clear {
 	margin-top: 20px;
 	padding: 10px 20px;
@@ -306,7 +352,7 @@ dialog#dialog-clear button {
 	font-weight: bold;
 }
 dialog#dialog-clear button#confirm-clear {
-	color: #d00;
+	color: var(--negative-fg-colour);
 }
 
 canvas {

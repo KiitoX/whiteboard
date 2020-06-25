@@ -134,7 +134,11 @@ function init() {
 	document.querySelector('#dialog-clear #confirm-clear').addEventListener('click', clearWhiteboard);
 	document.querySelector('#dialog-clear #cancel-clear').addEventListener('click', closeDialog);
 
+	document.querySelector('#theme').addEventListener('click', toggleTheme);
+
 	updateState();
+
+	loadTheme();
 
 	// connect to websocket server
 	connectToWebSocket();
@@ -250,14 +254,41 @@ function handleResize(evt) {
 	context.needRedraw = true;
 }
 
+function loadTheme() {
+	let match = document.cookie.match(/theme=(.+?)(;|$)/);
+	console.log(document.cookie, match);
+	if (match) {
+		setTheme(match[1]);
+	} else {
+		setTheme('light');
+	}
+}
+
+function toggleTheme(evt) {
+	let body = document.querySelector('body');
+	let theme = body.getAttribute('theme');
+	if (theme === 'light') {
+		setTheme('dark');
+	} else {
+		setTheme('light');
+	}
+}
+
+function setTheme(theme) {
+	let body = document.querySelector('body');
+	body.setAttribute('theme', theme);
+	document.cookie = `theme=${theme};max-age=8640000;sameSite=strict`;
+	context.theme = theme;
+	context.needRedraw = true;
+}
+
 function undo(evt) {
 	if (!(evt.currentTarget).hasAttribute('disabled')) {
 		let lastAction = state.undostack.pop();
-		lastAction.data.undo = true;
 		if (lastAction.type === 'added') {
-			sendMessage('del', lastAction.data);
+			sendMessage('del', {ids: lastAction.data, undo: true});
 		} else if (lastAction.type === 'deleted') {
-			sendMessage('add', lastAction.data);
+			sendMessage('add', {elements: lastAction.data, undo: true});
 		}
 		updateState();
 	}
@@ -267,9 +298,9 @@ function redo(evt) {
 	if (!evt.currentTarget.hasAttribute('disabled')) {
 		let lastUndo = state.redostack.pop();
 		if (lastUndo.type === 'added') {
-			sendMessage('del', lastUndo.data);
+			sendMessage('del', {ids: lastUndo.data, undo: false});
 		} else if (lastUndo.type === 'deleted') {
-			sendMessage('add', lastUndo.data);
+			sendMessage('add', {elements: lastUndo.data, undo: false});
 		}
 		updateState();
 	}
@@ -312,11 +343,9 @@ function clearSelection() {
 }
 
 function deleteSelection() {
-	// TODO joint undo would be /really/ nice here
-	for (let id of state.selected) {
-		sendMessage('del', {id: id, undo: false});
-		state.selected.delete(id);
-	}
+	console.log(Array.from(state.selected));
+	sendMessage('del', {ids: Array.from(state.selected), undo: false});
+	state.selected.clear();
 	state.redostack.length = 0;
 	updateState();
 	context.needRedraw = true;
@@ -507,10 +536,15 @@ function receiveMessage(evt) {
 		});
 		context.needRedraw = true;
 	} else if (message.type === 'added') {
-		state.elements[message.data.id] = message.data.properties;
+		let ids = [];
+		for (let i = 0; i < message.data.elements.length; i++) {
+			let element = message.data.elements[i];
+			state.elements[element.id] = element.element;
+			ids.push(element.id);
+		}
 		if (message.origin === state.whoami) {
-			let action = {type: 'added', data: {id: message.data.id}};
-			if (message.data.properties.undo) {
+			let action = {type: 'added', data: ids};
+			if (message.data.undo) {
 				state.redostack.push(action);
 			} else {
 				state.undostack.push(action);
@@ -522,7 +556,12 @@ function receiveMessage(evt) {
 		context.needRedraw = true;
 	} else if (message.type === 'deleted') {
 		if (message.origin === state.whoami) {
-			let action = {type: 'deleted', data: state.elements[message.data.id]};
+			let elements = [];
+			for (let i = 0; i < message.data.ids.length; i++) {
+				let element_id = message.data.ids[i];
+				elements.push(state.elements[element_id]);
+			}
+			let action = {type: 'deleted', data: elements};
 			if (message.data.undo) {
 				state.redostack.push(action);
 			} else {
@@ -530,23 +569,31 @@ function receiveMessage(evt) {
 			}
 			updateState();
 		} else {
-			let operationIndex = -1;
-			state.undostack.find(function(op, i) {
-				if (op.type === 'added' && Number(op.data.id) === message.data.id) {
-					operationIndex = i;
-					return true;
+			for (let i = 0; i < message.data.ids.length; i++) {
+				let element_id = String(message.data.ids[i])
+				let operationIndex = state.undostack.findIndex(function(op) {
+					return op.type === 'added' && op.data.includes(element_id);
+				});
+				if (operationIndex >= 0) {
+					// someone has deleted an element we've created,
+					// remove it from our undo stack
+					let idIndex = state.undostack[operationIndex].findIndex(element_id);
+					if (idIndex >= 0) {
+						state.undostack[operationIndex].splice(idIndex, 1);
+						if (state.undostack[operationIndex].length === 0) {
+							state.undostack.splice(operationIndex, 1);
+						}
+					}
+					updateState();
 				}
-			});
-			if (operationIndex >= 0) {
-				// someone has deleted an element we've created,
-				// remove it from our undo stack
-				state.undostack.splice(operationIndex, 1);
-				updateState();
 			}
 		}
-		state.selected.delete(message.data.id);
+		for (let i = 0; i < message.data.ids.length; i++) {
+			let element_id = message.data.ids[i];
+			state.selected.delete(element_id);
+			delete state.elements[element_id];
+		}
 		toggleSelectionToolbar();
-		delete state.elements[message.data.id];
 		context.needRedraw = true;
 	} else if (message.type === 'cleared') {
 		state.elements = {};
@@ -606,11 +653,12 @@ let tools = {
 		onUp: function(evt) {
 			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
 			sendMessage('add', {
-				undo: false,
-				body: state.local().body,
-				type: state.local().type,
-				size: state.local().size,
-				colour: state.local().colour
+				elements: [{
+					body: state.local().body,
+					type: state.local().type,
+					size: state.local().size,
+					colour: state.local().colour}],
+				undo: false
 			});
 			state.local().body.length = 0;
 			tools.pencil.previousLength = 0;
@@ -644,11 +692,8 @@ let tools = {
 					}
 				}
 			}
-			for (let id of intersects) {
-				// TODO low priority, here or elsewhere:
-				// one undo/redo element for multiple elements
-				// consequently maybe also multple add/del in one message
-				sendMessage('del', {id: id, undo: false});
+			if (intersects.length > 0) {
+				sendMessage('del', {ids: intersects, undo: false});
 				state.redostack.length = 0;
 				updateState();
 			}
@@ -889,8 +934,14 @@ let drawObject = {
 			ctx.stroke();
 		}
 	},
-	rect: function(ctx, points) {
+	rect: function(ctx, points, radius) {
 		let [ax, ay, bx, by] = points;
+		// apply padding outwards
+		ax += ((ax > bx) * 2 - 1) * radius;
+		ay += ((ay > by) * 2 - 1) * radius;
+		bx += ((ax < bx) * 2 - 1) * radius;
+		by += ((ay < by) * 2 - 1) * radius;
+
 		ctx.beginPath();
 		ctx.moveTo(ax, ay);
 		ctx.lineTo(ax, by);
@@ -1004,7 +1055,7 @@ function draw() {
 				ctx.lineWidth = 2;
 				ctx.strokeStyle = '#000';
 				ctx.setLineDash([5, 5]);
-				drawObject.rect(ctx, element.body);
+				drawObject.rect(ctx, element.body, 0);
 				ctx.setLineDash([]);
 				continue; // special drawing procedure
 			}
@@ -1018,12 +1069,13 @@ function draw() {
 		}
 	}
 
-	ctx.lineWidth = 1;
-	ctx.strokeStyle = '#000';
+	ctx.lineWidth = 1.2;
+	ctx.strokeStyle = '#666';
 	ctx.setLineDash([5, 5]);
 	for (const id of state.selected) {
-		let {lower_x, lower_y, upper_x, upper_y} = state.elements[id].bounds;
-		drawObject.rect(ctx, [lower_x, lower_y, upper_x, upper_y]);
+		let element = state.elements[id];
+		let {lower_x, lower_y, upper_x, upper_y} = element.bounds;
+		drawObject.rect(ctx, [lower_x, lower_y, upper_x, upper_y], element.size/2);
 	}
 	ctx.setLineDash([]);
 

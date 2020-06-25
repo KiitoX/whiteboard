@@ -4,7 +4,8 @@
 	<head>
 		<title>Whiteboard</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.13.0/css/all.min.css"/>
+		<!-- This webfont is found at https://github.com/KDE/breeze-icons under GPL and can be built by yourself -->
+		<link rel="stylesheet" type="text/css" href="/breeze/22/icons.css"/>
 		<link rel="stylesheet" type="text/css" href="res/style.css"/>
 		<script type="text/javascript" src="res/whiteboard.js"></script>
 	</head>
@@ -12,15 +13,15 @@
 		<div class="container">
 			<div class="toolbar">
 				<button id="select" title="Select">
-					<i class="fas fa-mouse-pointer"></i>
+					<i class="icon icon_pointer"></i>
 					<p>Select</p>
 				</button>
 				<button id="pan" title="Pan">
-					<i class="fas fa-hand-paper"></i>
+					<i class="icon icon_hand"></i>
 					<p>Pan</p>
 				</button>
 				<button id="pencil" title="Pencil" active>
-					<i class="fas fa-pencil-alt"></i>
+					<i class="icon icon_draw-freehand"></i>
 					<p>Draw</p>
 				</button>
 				<button id="size" title="Select brush size">
@@ -32,41 +33,45 @@
 					<p>Colour</p>
 				</button>
 				<button id="eraser" title="Erase">
-					<i class="fas fa-eraser"></i>
+					<i class="icon icon_draw-eraser"></i>
 					<p>Eraser</p>
 				</button>
 				<hr/>
 				<button id="undo" title="Undo [Ctrl+Z]" disabled>
-					<i class="fas fa-undo-alt"></i>
+					<i class="icon icon_edit-undo"></i>
 					<p>Undo</p>
 				</button>
 				<button id="redo" title="Redo [Ctrl+Shift+Z]" disabled>
-					<i class="fas fa-redo-alt"></i>
+					<i class="icon icon_edit-redo"></i>
 					<p>Redo</p>
 				</button>
 				<hr/>
 				<button id="clear" title="Clear Whiteboard">
-					<i class="fas fa-trash-alt"></i>
+					<i class="icon icon_edit-delete"></i>
 					<p>Clear White-board</p>
+				</button>
+				<button id="theme" title="Toggle Theme">
+					<i class="icon icon_contrast"></i>
+					<p></p>
 				</button>
 			</div>
 			<div class="whiteboard">
 				<div class="dialog-container">
-					<dialog id="dialog-select">
-						<button id="deselect" title="Delete">
-							<i class="fas fa-times"></i>
+					<dialog class="toolbar" id="dialog-select">
+						<button id="deselect" title="Cancel">
+							<i class="icon icon_dialog-cancel"></i>
 							<p>Cancel</p>
 						</button>
 						<button id="move" wip title="Move">
-							<i class="fas fa-arrows-alt"></i>
-							<p>Move</p>
+							<i class="icon icon_transform-move"></i>
+							<p>[WIP] Move</p>
 						</button>
 						<button id="delete" title="Delete">
-							<i class="fas fa-trash-alt"></i>
+							<i class="icon icon_edit-delete"></i>
 							<p>Delete</p>
 						</button>
 					</dialog>
-					<dialog id="dialog-shapes"> <!-- TODO -->
+					<dialog class="toolbar" id="dialog-shapes"> <!-- TODO -->
 						<button id="freehand" title="Freehand">
 							<i class="fas fa-wave-sin"></i>
 							<p>Freehand</p>
@@ -88,7 +93,7 @@
 							<p>Circle</p>
 						</button>
 					</dialog>
-					<dialog id="dialog-size">
+					<dialog class="toolbar" id="dialog-size">
 						<button style="--size: 3px"></button>
 						<button style="--size: 5px"></button>
 						<button style="--size: 7px"></button>
@@ -132,10 +137,10 @@
 					<p>Both of these are hard requirements for this page to function.</p>
 				</canvas>
 			</div>
-			<div class="status" state="disconnected">
-				<i id="connected" class="fas fa-check-circle"></i>
-				<i id="loading" class="fas fa-spinner"></i>
-				<i id="disconnected" class="fas fa-exclamation-circle"></i>
+			<div class="status" state="loading">
+				<i id="connected" class="icon icon_network-connect"></i>
+				<i id="loading" class="icon icon_gtk-convert"></i>
+				<i id="disconnected" class="icon icon_network-disconnect"></i>
 			</div>
 		</div>
 	</body>

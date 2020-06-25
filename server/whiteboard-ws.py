@@ -5,8 +5,7 @@ import websockets
 import socket
 
 import json
-#import mariadb
-import mysql.connector
+import mariadb
 
 import urllib.parse
 
@@ -49,9 +48,8 @@ async def send_to_all(url, msg_type, msg_data, client_id):
 
 async def add_client(url, client):
     if url not in connected_clients:
-        db_connection.ping(reconnect=True)
         db = db_connection.cursor()
-        db.execute("SELECT id FROM boards WHERE identifier=%s", (url[1:],))
+        db.execute("SELECT id FROM boards WHERE identifier=?", (url[1:],))
         res = db.fetchall()
         if res:
             connected_clients[url] = set()
@@ -83,7 +81,7 @@ async def send_state(url, client):
             SELECT contents.id, types.name, contents.content, \
             bounds_lower_x, bounds_upper_x, bounds_lower_y, bounds_upper_y FROM contents \
             INNER JOIN types ON contents.type_id=types.id WHERE \
-            board_id=(SELECT id FROM boards WHERE identifier=%s)""", (url[1:],))
+            board_id=(SELECT id FROM boards WHERE identifier=?)""", (url[1:],))
 
     # TODO check out how this could perform betterm clearly json processing is not the way to go
     # (id, type, content)
@@ -101,44 +99,47 @@ async def send_identity(client):
 
 
 async def handle_message(url, client, message):
-    db_connection.ping(reconnect=True)
     db = db_connection.cursor()
     message = json.loads(message)
     if message["type"] == "drawing":
         await send_to_all(url, "ongoing", message["data"], hash(client))
     elif message["type"] == "add":
-        type_ = message["data"]["type"]
-        body = message["data"]["body"]
+        elements = []
+        for element in message["data"]["elements"]:
+            type_ = element["type"]
+            body = element["body"]
 
-        lower_x = min(body[0::2])
-        upper_x = max(body[0::2])
-        lower_y = min(body[1::2])
-        upper_y = max(body[1::2])
+            lower_x = min(body[0::2])
+            upper_x = max(body[0::2])
+            lower_y = min(body[1::2])
+            upper_y = max(body[1::2])
 
-        message["data"]["bounds"] = {
-                "lower_x": lower_x,
-                "upper_x": upper_x,
-                "lower_y": lower_y,
-                "upper_y": upper_y,
-        }
-        
-        db.execute("""\
-                INSERT INTO contents SET \
-                board_id=(SELECT id FROM boards WHERE identifier=%s),\
-                type_id=(SELECT id FROM types WHERE name=%s),\
-                bounds_lower_x=%s, bounds_upper_x=%s,
-                bounds_lower_y=%s, bounds_upper_y=%s,
-                content=%s""", (url[1:], type_, lower_x, upper_x, lower_y, upper_y, json.dumps(message["data"])))
+            element["bounds"] = {
+                    "lower_x": lower_x,
+                    "upper_x": upper_x,
+                    "lower_y": lower_y,
+                    "upper_y": upper_y,
+            }
 
-        db.execute("SELECT LAST_INSERT_ID()")
-        element_id, = db.fetchone()
-        
-        data = {"id": element_id, "properties": message["data"]}
-        #, "bounds": [lower_x, upper_x, lower_y, upper_y]}
+            db.execute("""\
+                    INSERT INTO contents SET \
+                    board_id=(SELECT id FROM boards WHERE identifier=?),\
+                    type_id=(SELECT id FROM types WHERE name=?),\
+                    bounds_lower_x=?, bounds_upper_x=?,
+                    bounds_lower_y=?, bounds_upper_y=?,
+                    content=?""", (url[1:], type_, lower_x, upper_x, lower_y, upper_y, json.dumps(element)))
+
+            db.execute("SELECT LAST_INSERT_ID()")
+            element_id, = db.fetchone()
+            
+            data = {"id": element_id, "element": element}
+            elements.append(data)
+
+        data = {"undo": message["data"]["undo"], "elements": elements}
         await send_to_all(url, "added", data, hash(client))
     elif message["type"] == "del":
-        element_id = message["data"]["id"]
-        db.execute("DELETE FROM contents WHERE id=%s", (element_id,))
+        for element_id in message["data"]["ids"]:
+            db.execute("DELETE FROM contents WHERE id=?", (element_id,))
         
         await send_to_all(url, "deleted", message["data"], hash(client))
     elif message["type"] == "get":
@@ -149,7 +150,7 @@ async def handle_message(url, client, message):
         # interesting idea, not much of a priority as of now
         db.execute("""\
                 DELETE FROM contents WHERE \
-                board_id=(SELECT id FROM boards WHERE identifier=%s)""", (url[1:],))
+                board_id=(SELECT id FROM boards WHERE identifier=?)""", (url[1:],))
         await send_to_all(url, "cleared", "", "")
     elif message["type"] == "query":
         body = message["data"]["body"]
@@ -172,16 +173,16 @@ async def handle_message(url, client, message):
         if contain:
             db.execute("""\
                     SELECT id FROM contents WHERE \
-                    board_id=(SELECT id FROM boards WHERE identifier=%s) \
-                    AND %s <= bounds_lower_x AND bounds_upper_x <= %s \
-                    AND %s <= bounds_lower_y AND bounds_upper_y <= %s""",
+                    board_id=(SELECT id FROM boards WHERE identifier=?) \
+                    AND ? <= bounds_lower_x AND bounds_upper_x <= ? \
+                    AND ? <= bounds_lower_y AND bounds_upper_y <= ?""",
                     (url[1:], lower_x, upper_x, lower_y, upper_y))
         else:
             db.execute("""\
                     SELECT id FROM contents WHERE \
-                    board_id=(SELECT id FROM boards WHERE identifier=%s) \
-                    AND bounds_lower_x <= %s AND bounds_upper_x >= %s \
-                    AND bounds_lower_y <= %s AND bounds_upper_y >= %s""",
+                    board_id=(SELECT id FROM boards WHERE identifier=?) \
+                    AND bounds_lower_x <= ? AND bounds_upper_x >= ? \
+                    AND bounds_lower_y <= ? AND bounds_upper_y >= ?""",
                     (url[1:], upper_x, lower_x, upper_y, lower_y))
 
         matching_ids = list(id_ for (id_,) in db.fetchall())
