@@ -5,7 +5,7 @@ import websockets
 import socket
 
 import json
-import mariadb
+import mysql.connector
 
 import urllib.parse
 
@@ -22,6 +22,7 @@ __outgoing_message_types = [
         "all_elements",
         "added",
         "deleted",
+        "moved",
         "cleared",
         "ongoing",
         "matches",
@@ -29,7 +30,7 @@ __outgoing_message_types = [
 
 
 DOMAIN_NAME = "..."
-SSL_CERT_PATH = "/etc/letsencrypt/live/.../fullchain_pem"
+SSL_CERT_PATH = "/etc/letsencrypt/live/.../fullchain.pem"
 SSL_KEY_PATH = "/etc/letsencrypt/live/.../privkey.pem"
 
 DB_USER = "whiteboard"
@@ -55,7 +56,7 @@ async def add_client(url, client):
             connected_clients[url] = set()
         else:
             # reject client, board does not exist
-            logging.info("client " + str(hash(client)) + " tried to connect to nonexistent path " + url)
+            logging.info("client %s tried to connect to nonexistent path %s", hash(client), url)
             await client.close()
             await client.ping()
     else:
@@ -98,50 +99,73 @@ async def send_identity(client):
     await client.send(message)
 
 
+async def __add_element(url, db, element):
+    type_ = element["type"]
+    body = element["body"]
+
+    if type_ == "line" or type_ == "smooth":
+        lower_x = min(body[0::2])
+        upper_x = max(body[0::2])
+        lower_y = min(body[1::2])
+        upper_y = max(body[1::2])
+
+        element["bounds"] = {
+                "lower_x": lower_x,
+                "upper_x": upper_x,
+                "lower_y": lower_y,
+                "upper_y": upper_y,
+        }
+    else:
+        lower_x = element["bounds"]["lower_x"]
+        upper_x = element["bounds"]["upper_x"]
+        lower_y = element["bounds"]["lower_y"]
+        upper_y = element["bounds"]["upper_y"]
+
+    db.execute("""\
+            INSERT INTO contents SET \
+            board_id=(SELECT id FROM boards WHERE identifier=?),\
+            type_id=(SELECT id FROM types WHERE name=?),\
+            bounds_lower_x=?, bounds_upper_x=?,
+            bounds_lower_y=?, bounds_upper_y=?,
+            content=?""", (url[1:], type_, lower_x, upper_x, lower_y, upper_y, json.dumps(element)))
+
+    db.execute("SELECT LAST_INSERT_ID()")
+    element_id, = db.fetchone()
+
+    return element_id, element
+
+
 async def handle_message(url, client, message):
     db = db_connection.cursor()
     message = json.loads(message)
-    if message["type"] == "drawing":
+    if message["type"] == "update":
         await send_to_all(url, "ongoing", message["data"], hash(client))
     elif message["type"] == "add":
         elements = []
         for element in message["data"]["elements"]:
-            type_ = element["type"]
-            body = element["body"]
+            elem_id, elem = await __add_element(url, db, element)
 
-            lower_x = min(body[0::2])
-            upper_x = max(body[0::2])
-            lower_y = min(body[1::2])
-            upper_y = max(body[1::2])
-
-            element["bounds"] = {
-                    "lower_x": lower_x,
-                    "upper_x": upper_x,
-                    "lower_y": lower_y,
-                    "upper_y": upper_y,
-            }
-
-            db.execute("""\
-                    INSERT INTO contents SET \
-                    board_id=(SELECT id FROM boards WHERE identifier=?),\
-                    type_id=(SELECT id FROM types WHERE name=?),\
-                    bounds_lower_x=?, bounds_upper_x=?,
-                    bounds_lower_y=?, bounds_upper_y=?,
-                    content=?""", (url[1:], type_, lower_x, upper_x, lower_y, upper_y, json.dumps(element)))
-
-            db.execute("SELECT LAST_INSERT_ID()")
-            element_id, = db.fetchone()
-            
-            data = {"id": element_id, "element": element}
+            data = {"id": elem_id, "element": elem}
             elements.append(data)
 
-        data = {"undo": message["data"]["undo"], "elements": elements}
+        data = {"undo": message["data"]["undo"], "select": message["data"]["select"], "elements": elements}
         await send_to_all(url, "added", data, hash(client))
     elif message["type"] == "del":
         for element_id in message["data"]["ids"]:
             db.execute("DELETE FROM contents WHERE id=?", (element_id,))
         
         await send_to_all(url, "deleted", message["data"], hash(client))
+    elif message["type"] == "move":
+        idmap = []
+        for id_, element in message["data"]["elements"]:
+            new_id, _ = await __add_element(url, db, element)
+            
+            db.execute("DELETE FROM contents WHERE id=?", (id_,))
+            
+            idmap.append([id_, new_id])
+
+        data = {"idmap": idmap, "offset": message["data"]["offset"]}
+        await send_to_all(url, "moved", data, hash(client))
     elif message["type"] == "get":
         # TODO currently not used
         await send_state(url, client)
@@ -190,7 +214,7 @@ async def handle_message(url, client, message):
         message = json.dumps({"type": "matches", "data": {"type": type_, "line": body, "bounds": bounds, "ids": matching_ids}})
         await client.send(message)
     else:
-        logging.error("unsupported method: {}", message)
+        logging.error("unsupported method: %s", message)
 
 
 async def send_debug(client):
@@ -223,7 +247,7 @@ async def manage_state(client, path):
                     await client.close()
                     await client.ping()
         await add_client(url.path, client)
-        logging.info("client " + str(hash(client)) + " connected at " + url.path)
+        logging.info("client %s connected at %s", hash(client), url.path)
         await send_identity(client)
         await send_state(url.path, client)
         async for message in client:
@@ -234,7 +258,7 @@ async def manage_state(client, path):
         pass # here as well
     finally:
         if url.path in connected_clients and client in connected_clients[url.path]:
-            logging.info("client " + str(hash(client)) + " disconnected at " + url.path)
+            logging.info("client %s disconnected at %s", hash(client), url.path)
             await remove_client(url.path, client)
 
 
@@ -243,13 +267,11 @@ fullchain_pem = pathlib.Path(SSL_CERT_PATH)
 privkey_pem = pathlib.Path(SSL_KEY_PATH)
 ssl_context.load_cert_chain(fullchain_pem, keyfile=privkey_pem)
 
-start_server = websockets.serve(manage_state, DOMAIN, 26273, ssl=ssl_context, family=socket.AF_INET6)
+start_server = websockets.serve(manage_state, DOMAIN_NAME, 26273, ssl=ssl_context, family=socket.AF_INET6)
 
 try:
-    #db_connection = mariadb.connect(user="whiteboard", database="whiteboard",
     db_connection = mysql.connector.connect(user=DB_USER, database=DB_DATABASE,
             unix_socket=DB_SOCKET, autocommit=True)
-    #db_connection.auto_reconnect = True
     asyncio.get_event_loop().run_until_complete(start_server)
     asyncio.get_event_loop().run_forever()
 except KeyboardInterrupt:

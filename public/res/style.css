@@ -66,8 +66,13 @@ body[theme=dark] {
 }
 
 div.toolbar {
-	display: flex;
-	flex-flow: column;
+	display: grid;
+
+	grid-template-rows: repeat(auto-fit, minmax(min-content, 0));
+	grid-template-columns: 1fr;
+	
+	row-gap: 6px;
+	padding: 6px;
 	
 	overflow-y: scroll;
 	scrollbar-width: none;
@@ -80,24 +85,15 @@ div.toolbar {
     display: none;
 }
 .toolbar hr {
-	margin: 0;
-	margin-top: 6px;
+	margin: 0 -6px;
+	grid-column: 1;
 	border: none;
 	border-top: 1px solid var(--border-colour);
-}
-div.toolbar:after {
-	/* ugly hack to get padding at the bottom in FF
-	 * works for other browsers but could be replaced with
-	 * padding-bottom in at least chrome 
-	 */
-	content: "\00a0";
-	line-height: 6px;
-	font-size: 1px;
 }
 
 button {
 	width: var(--button-size);
-	min-height: var(--button-size);
+	min-height: max-content;
 
 	cursor: pointer;
 
@@ -108,15 +104,12 @@ button {
 	text-align: center;
 	vertical-align: middle;
 	
-	flex: 0 0 auto;
-	margin: 6px;
-	margin-bottom: 0;
+	grid-column: 1;
 	padding: 0;
 
 	color: var(--fg-colour);
 	background-color: var(--bg-colour);
 	background-clip: border-box;
-	overflow: hidden;
 	
 	border: 1px solid transparent;
 }
@@ -160,6 +153,7 @@ button[wip] i {
 	-webkit-background-clip: text;
 	color: transparent;
 }
+
 .toolbar button .filler {
 	min-height: calc(var(--button-size) * 0.7);
 	margin-bottom: -8px;
@@ -183,7 +177,50 @@ button[wip] i {
 }
 
 .toolbar button#theme {
+	height: var(--button-size);
 	margin-top: auto;
+	grid-row: -1;
+}
+
+#pencil:not([tool=freehand]) i.icon_draw-freehand,
+#pencil:not([tool=line]) i.icon_draw-line,
+#pencil:not([tool=arrow]) i.icon_draw-arrow,
+#pencil:not([tool=rectangle]) i.icon_draw-rectangle,
+#pencil:not([tool=circle]) i.icon_draw-circle,
+#pencil:not([tool=ellipse]) i.icon_draw-ellipse {
+	display: none;
+}
+
+.toolbar [group] {
+	display: grid;
+}
+.toolbar [group] > div {
+	display: grid;
+	grid-gap: 6px;
+	margin: 6px 0;
+
+	overflow: hidden;
+	transition: max-height ease-in 300ms,
+				margin ease-in 200ms,
+				opacity ease-in 400ms;
+}
+/* set in js?? */
+.toolbar [group=selection] > div {
+	max-height: 274px;
+}
+.toolbar [group=pencil] > div {
+	max-height: 414px;
+}
+
+.toolbar:not([visible=selection]) [group=selection] > div,
+.toolbar:not([visible=pencil]) [group=pencil] > div {
+	margin: 0;
+	max-height: 0;
+	opacity: 0;
+}
+.toolbar:not([visible=selection]) [group=selection] > hr,
+.toolbar:not([visible=pencil]) [group=pencil] > hr {
+	display: none;
 }
 
 .status {
@@ -271,19 +308,13 @@ dialog.toolbar button {
 	margin: 0;
 }
 
-dialog#dialog-select {
-	margin-top: 0;
-	
-	border-top: none;
-	border-radius: 0 0 4px 0;
-}
-
 dialog#dialog-size {
 	margin-top: 102px;
 	
 	border-radius: 0 4px 4px 0;
 }
 dialog#dialog-size button {
+	height: var(--button-size);
 	background: radial-gradient(circle, var(--fg-colour) calc(var(--size) / 2),
 										var(--bg-colour) calc(var(--size) / 2 + 1px));
 }
@@ -325,6 +356,7 @@ dialog#dialog-colour #colour-palette {
 }
 dialog#dialog-colour button {
 	--button-size: 48px;
+	height: var(--button-size);
 	background: var(--colour);
 }
 

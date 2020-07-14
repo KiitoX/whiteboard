@@ -11,19 +11,70 @@
 	</head>
 	<body>
 		<div class="container">
-			<div class="toolbar">
-				<button id="select" title="Select">
-					<i class="icon icon_pointer"></i>
-					<p>Select</p>
-				</button>
+			<div class="toolbar" visible="">
+				<div group="selection">
+					<button id="select" title="Select">
+						<i class="icon icon_pointer"></i>
+						<p>Select</p>
+					</button>
+					<div>
+						<button id="deselect" title="Cancel">
+							<i class="icon icon_dialog-cancel"></i>
+							<p>Cancel</p>
+						</button>
+						<button id="move" title="Move">
+							<i class="icon icon_transform-move"></i>
+							<p>Move</p>
+						</button>
+						<button id="copy" title="Copy">
+							<i class="icon icon_edit-copy"></i>
+							<p>Copy</p>
+						</button>
+						<button id="delete" title="Delete">
+							<i class="icon icon_edit-delete"></i>
+							<p>Delete</p>
+						</button>
+					</div>
+					<hr/>
+				</div>
 				<button id="pan" title="Pan">
 					<i class="icon icon_hand"></i>
 					<p>Pan</p>
 				</button>
-				<button id="pencil" title="Pencil" active>
-					<i class="icon icon_draw-freehand"></i>
-					<p>Draw</p>
-				</button>
+				<div group="pencil">
+					<button id="pencil" tool="freehand" title="Freehand" active>
+						<i class="icon icon_draw-freehand"></i>
+						<i class="icon icon_draw-line"></i>
+						<i class="icon icon_draw-arrow"></i>
+						<i class="icon icon_draw-rectangle"></i>
+						<i class="icon icon_draw-circle"></i>
+						<i class="icon icon_draw-ellipse"></i>
+						<p>Draw</p>
+					</button>
+					<div>
+						<button id="freehand" title="Freehand">
+							<i class="icon icon_draw-freehand"></i>
+							<p>Free</p>
+						</button>
+						<button id="line" title="Line">
+							<i class="icon icon_draw-line"></i>
+							<p>Line</p>
+						</button>
+						<button id="arrow" style="display:none" title="Arrow">
+							<i class="icon icon_draw-arrow"></i>
+							<p>Arrow</p>
+						</button>
+						<button id="rectangle" title="Rectangle">
+							<i class="icon icon_draw-rectangle"></i>
+							<p>Rect</p>
+						</button>
+						<button id="ellipse" title="Ellipse">
+							<i class="icon icon_draw-ellipse"></i>
+							<p>Ellipse</p>
+						</button>
+					</div>
+					<hr/>
+				</div>
 				<button id="size" title="Select brush size">
 					<div class="filler"></div>
 					<p>Size</p>
@@ -57,42 +108,6 @@
 			</div>
 			<div class="whiteboard">
 				<div class="dialog-container">
-					<dialog class="toolbar" id="dialog-select">
-						<button id="deselect" title="Cancel">
-							<i class="icon icon_dialog-cancel"></i>
-							<p>Cancel</p>
-						</button>
-						<button id="move" wip title="Move">
-							<i class="icon icon_transform-move"></i>
-							<p>[WIP] Move</p>
-						</button>
-						<button id="delete" title="Delete">
-							<i class="icon icon_edit-delete"></i>
-							<p>Delete</p>
-						</button>
-					</dialog>
-					<dialog class="toolbar" id="dialog-shapes"> <!-- TODO -->
-						<button id="freehand" title="Freehand">
-							<i class="fas fa-wave-sin"></i>
-							<p>Freehand</p>
-						</button>
-						<button id="line" title="Line">
-							<i class="fas fa-arrows-alt"></i>
-							<p>Line</p>
-						</button>
-						<button id="arrow" title="Arrow">
-							<i class="fas fa-long-arrow-alt-right"></i>
-							<p>Arrow</p>
-						</button>
-						<button id="rectangle" title="Rectangle">
-							<i class="far fa-square"></i>
-							<p>Rectangle</p>
-						</button>
-						<button id="circle" title="Circle">
-							<i class="far fa-circle"></i>
-							<p>Circle</p>
-						</button>
-					</dialog>
 					<dialog class="toolbar" id="dialog-size">
 						<button style="--size: 3px"></button>
 						<button style="--size: 5px"></button>

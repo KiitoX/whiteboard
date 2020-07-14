@@ -4,10 +4,10 @@ window.addEventListener('load', init);
 
 function throttle(timeout, func) {
 	let previous = 0;
-	let run = function() {
+	let run = function(a, b) {
 		let now = Date.now();
 		if (now - previous >= timeout) {
-			func();
+			func(a, b);
 			previous = now;
 		}
 	};
@@ -42,6 +42,30 @@ let state = {
 	toolInUse: null, // "pan" OR "active"
 	ongoing: {
 		// client_id: {
+		//   TODO:
+		//   type: 'none'
+		//
+		//   type: 'eraser'
+		//   data: [<points>]
+		//
+		//   type: 'select'
+		//   data: [ax, ay, bx, by}
+		//
+		//   type: 'freehand'/'line'
+		//   data: {
+		//     body: [<points>]
+		//     size: <num>
+		//     colour: '#rrggbb'
+		//   }
+		//   
+		//   type: 'move'/'copy'
+		//   data: {
+		//     points: [ax, ay, bx by]
+		//     offset: [x, y]
+		//     ids: [<ids>]
+		//   }
+		//
+		//   --------------
 		//   body: [ongoing drawing data]
 		//   size: <number>
 		//   colour: '#rrggbb'
@@ -105,8 +129,14 @@ function init() {
 	document.querySelector('#pencil').addEventListener('click', changeTool);
 	document.querySelector('#eraser').addEventListener('click', changeTool);
 
+	document.querySelector('#freehand').addEventListener('click', changePencilType);
+	document.querySelector('#line').addEventListener('click', changePencilType);
+	document.querySelector('#rectangle').addEventListener('click', changePencilType);
+	document.querySelector('#ellipse').addEventListener('click', changePencilType);
+
 	document.querySelector('#deselect').addEventListener('click', clearSelection);
 	document.querySelector('#move').addEventListener('click', changeTool);
+	document.querySelector('#copy').addEventListener('click', changeTool);
 	document.querySelector('#delete').addEventListener('click', deleteSelection);
 	
 	document.querySelector('#size').addEventListener('click', toggleSizeSelector);
@@ -192,20 +222,29 @@ function handlePointer(evt) {
 	}
 }
 
+// only allow specific scale values at variable intervals for maximal usefulness
+// and to keep some semblance of pixel accuracy at closer values
+let scaleLevels = [0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0];
+
 function handleWheel(evt) {
 	// we don't really want to care about the amount of lines scrolled
 	// that is fairly setup specific, so we only use the wheel direction
 	let direction = Math.sign(evt.deltaY);
-	let newScale = context.scale / Math.pow(2, direction);
-	newScale = Math.max(0.25, Math.min(newScale, 4.0));
+
+	let scaleIndex = scaleLevels.indexOf(context.scale);
+	let nextIndex = scaleIndex - direction;
+	if (nextIndex < 0 || nextIndex >= scaleLevels.length) {
+		return; // do not update anything
+	}
+	let newScale = scaleLevels[nextIndex];
 
 	let oX = evt.currentTarget.width / 2, oY = evt.currentTarget.height / 2;
 	let tX = context.offsetX, tY = context.offsetY;
 	
 	if (state.toolInUse === 'active' || evt.shiftKey) {
-		let mX = evt.offsetX, mY = evt.offsetY; // mouse coordinates on canvas
-		oX = mX;
-		oY = mY;
+		// center scroll on canvas mouse coordinates
+		oX = evt.offsetX;
+		oY = evt.offsetY;
 	}
 
 	// my legendary "scroll-at-mouse-position" code I wrote a few years back
@@ -256,7 +295,7 @@ function handleResize(evt) {
 
 function loadTheme() {
 	let match = document.cookie.match(/theme=(.+?)(;|$)/);
-	console.log(document.cookie, match);
+
 	if (match) {
 		setTheme(match[1]);
 	} else {
@@ -288,7 +327,7 @@ function undo(evt) {
 		if (lastAction.type === 'added') {
 			sendMessage('del', {ids: lastAction.data, undo: true});
 		} else if (lastAction.type === 'deleted') {
-			sendMessage('add', {elements: lastAction.data, undo: true});
+			sendMessage('add', {elements: lastAction.data, undo: true, select: false});
 		}
 		updateState();
 	}
@@ -300,7 +339,7 @@ function redo(evt) {
 		if (lastUndo.type === 'added') {
 			sendMessage('del', {ids: lastUndo.data, undo: false});
 		} else if (lastUndo.type === 'deleted') {
-			sendMessage('add', {elements: lastUndo.data, undo: false});
+			sendMessage('add', {elements: lastUndo.data, undo: false, select: false});
 		}
 		updateState();
 	}
@@ -320,6 +359,12 @@ function setTool(name) {
 
 function changeTool(evt) {
 	let activeTool = document.querySelector('[active]');
+	if (activeTool.id === 'eraser' && evt.currentTarget.id === 'eraser') {
+		// special eraser toggle function
+		setTool('pencil');
+		return;
+	}
+
 	activeTool.removeAttribute('active');
 	evt.currentTarget.setAttribute('active', '');
 	state.activeTool = evt.currentTarget.id;
@@ -328,22 +373,59 @@ function changeTool(evt) {
 	document.querySelector('#dialog-size').removeAttribute('open');
 	document.querySelector('#dialog-colour').removeAttribute('open');
 	toggleSelectionToolbar();
+	togglePencilToolbar(activeTool.id !== 'pencil');
+}
+
+function changePencilType(evt) {
+	let pencilBtn = document.querySelector('#pencil');
+	pencilBtn.setAttribute('tool', evt.currentTarget.id);
+
+	tools.pencil.type = evt.currentTarget.id;
+	
+	togglePencilToolbar();
 }
 
 function toggleSelectionToolbar() {
-	document.querySelector('#dialog-select').toggleAttribute('open',
-		(state.activeTool === 'select' || state.activeTool === 'move')
-		&& state.selected.size > 0);
+	let toolbar = document.querySelector('.toolbar[visible]');
+	let visible = toolbar.getAttribute('visible');
+	if (state.activeTool === 'select' || state.activeTool === 'move' || state.activeTool === 'copy') {
+		if (state.selected.size > 0) {
+			// TODO set max size
+			toolbar.setAttribute('visible', 'selection');
+		} else {
+			toolbar.setAttribute('visible', '');
+		}
+	} else if (visible === 'selection') {
+		toolbar.setAttribute('visible', '');
+		state.selected.clear();
+		context.needRedraw = true;
+	}
+}
+
+function togglePencilToolbar(close) {
+	let toolbar = document.querySelector('.toolbar[visible]');
+	let visible = toolbar.getAttribute('visible');
+	if (state.activeTool === 'pencil') {
+		if (close || visible === 'pencil') {
+			toolbar.setAttribute('visible', '');
+		} else {
+			// TODO set max size
+			toolbar.setAttribute('visible', 'pencil');
+		}
+	} else if (visible === 'pencil') {
+		toolbar.setAttribute('visible', '');
+	}
 }
 
 function clearSelection() {
+	setTool('select');
 	state.selected.clear();
 	toggleSelectionToolbar();
 	context.needRedraw = true;
 }
 
 function deleteSelection() {
-	console.log(Array.from(state.selected));
+	setTool('select');
 	sendMessage('del', {ids: Array.from(state.selected), undo: false});
 	state.selected.clear();
 	state.redostack.length = 0;
@@ -353,6 +435,7 @@ function deleteSelection() {
 
 function toggleSizeSelector(evt) {
 	setTool('pencil');
+	togglePencilToolbar(true);
 	let open = document.querySelector('#dialog-size').toggleAttribute('open');
 	if (open) {
 		document.querySelector('#dialog-colour').removeAttribute('open');
@@ -373,6 +456,7 @@ function selectSlider(evt) {
 
 function toggleColourSelector(evt) {
 	setTool('pencil');
+	togglePencilToolbar(true);
 	let open = document.querySelector('#dialog-colour').toggleAttribute('open');
 	if (open) {
 		document.querySelector('#dialog-size').removeAttribute('open');
@@ -471,6 +555,7 @@ function handleSocketOpen(evt) {
 }
 
 function handleSocketError(evt) {
+	console.log(evt);
 	document.querySelector('.status').setAttribute('state', 'disconnected');
 }
 
@@ -493,17 +578,13 @@ function receiveMessage(evt) {
 		state.clients = new Set(message.data);
 		for (let client of state.clients) {
 			state.ongoing[client] = {
-				body: [],
-				size: 3,
-				colour: '#148',
+				type: 'none',
 			};
 		}
 	} else if (message.type === 'client_joined') {
 		state.clients.add(message.data);
 		state.ongoing[message.data] = {
-			body: [],
-			size: 3,
-			colour: '#148',
+			type: 'none',
 		};
 	} else if (message.type === 'client_left') {
 		state.clients.delete(message.data);
@@ -530,10 +611,11 @@ function receiveMessage(evt) {
 			state.elements[id] = element;
 		}
 		*/
-		message.data.forEach(function(element) {
+        for (let i = 0; i < message.data.length; i++) {
+            let element = message.data[i];
 			// [id, type, "content", bounds...]
 			state.elements[element[0]] = JSON.parse(element[2]);
-		});
+		}
 		context.needRedraw = true;
 	} else if (message.type === 'added') {
 		let ids = [];
@@ -541,6 +623,9 @@ function receiveMessage(evt) {
 			let element = message.data.elements[i];
 			state.elements[element.id] = element.element;
 			ids.push(element.id);
+			if (message.origin === state.whoami && message.data.select) {
+				state.selected.add(element.id);
+			}
 		}
 		if (message.origin === state.whoami) {
 			let action = {type: 'added', data: ids};
@@ -551,7 +636,9 @@ function receiveMessage(evt) {
 			}
 			updateState();
 		} else {
-			state.ongoing[message.origin].body.length = 0;
+			// TODO is this wise? I guess ongoing from message.origin will always be relevant
+			state.ongoing[message.origin].type = 'none';
+			delete state.ongoing[message.origin].data;
 		}
 		context.needRedraw = true;
 	} else if (message.type === 'deleted') {
@@ -570,17 +657,17 @@ function receiveMessage(evt) {
 			updateState();
 		} else {
 			for (let i = 0; i < message.data.ids.length; i++) {
-				let element_id = String(message.data.ids[i])
+				let element_id = message.data.ids[i];
 				let operationIndex = state.undostack.findIndex(function(op) {
 					return op.type === 'added' && op.data.includes(element_id);
 				});
 				if (operationIndex >= 0) {
 					// someone has deleted an element we've created,
 					// remove it from our undo stack
-					let idIndex = state.undostack[operationIndex].findIndex(element_id);
+					let idIndex = state.undostack[operationIndex].data.indexOf(element_id);
 					if (idIndex >= 0) {
-						state.undostack[operationIndex].splice(idIndex, 1);
-						if (state.undostack[operationIndex].length === 0) {
+						state.undostack[operationIndex].data.splice(idIndex, 1);
+						if (state.undostack[operationIndex].data.length === 0) {
 							state.undostack.splice(operationIndex, 1);
 						}
 					}
@@ -595,6 +682,37 @@ function receiveMessage(evt) {
 		}
 		toggleSelectionToolbar();
 		context.needRedraw = true;
+	} else if (message.type === 'moved') {
+		if (message.origin === state.whoami) {
+			state.selected.clear();
+			for (let i = 0; i < message.data.idmap.length; i++) {
+				let [old_id, new_id] = message.data.idmap[i];
+				state.selected.add(new_id);
+			}
+		} else {
+			state.ongoing[message.origin].type = 'none';
+			delete state.ongoing[message.origin].data;
+		}
+		for (let i = 0; i < message.data.idmap.length; i++) {
+			let [old_id, new_id] = message.data.idmap[i];
+			state.elements[new_id] = state.elements[old_id];
+            state.selected.delete(old_id);
+			delete state.elements[old_id];
+			let element = state.elements[new_id];
+			if (element.type === 'line' || element.type === 'smooth') {
+				element.body = element.body.map(function(x, i) {
+					return x - message.data.offset[i % 2];
+				});
+			} else if (element.type === 'ellipse') {
+				element.body[0] -= message.data.offset[0];
+				element.body[1] -= message.data.offset[1];
+			}
+			element.bounds.lower_x -= message.data.offset[0];
+			element.bounds.lower_y -= message.data.offset[1];
+			element.bounds.upper_x -= message.data.offset[0];
+			element.bounds.upper_y -= message.data.offset[1];
+		}
+		context.needRedraw = true;
 	} else if (message.type === 'cleared') {
 		state.elements = {};
 		state.undostack = [];
@@ -603,23 +721,45 @@ function receiveMessage(evt) {
 		context.needRedraw = true;
 	} else if (message.type === 'ongoing') {
 		if (message.origin !== state.whoami) {
-			state.ongoing[message.origin].size = Number(message.data.size);
-			state.ongoing[message.origin].colour = message.data.colour;
-			Array.prototype.push.apply(
-				state.ongoing[message.origin].body, message.data.body);
+			let update = message.data;
+			let ongoing = state.ongoing[message.origin];
+			if (ongoing.type !== update.type) {
+				// first time receiving this type
+				ongoing.type = update.type;
+				ongoing.data = update.data;
+			} else {
+				if (update.type === 'freehand') {
+					for (let i = 0; i < update.data.body.length; i++) {
+						ongoing.data.body.push(update.data.body[i]);
+					}
+				} else if (update.type === 'line' || update.type === 'arrow'
+					|| update.type === 'rectangle' || update.type === 'ellipse') {
+					ongoing.data.body = update.data.body;
+				} else if (update.type === 'move' || update.type === 'copy') {
+					ongoing.data.offset = update.data.offset;
+				}
+
+			}
 		}
 		context.needRedraw = true;
-	} else if (message.type === 'matches') {
-		if (message.data.type === 'eraser') {
+    } else if (message.type === 'matches') {
+        if (message.data.type === 'eraser') {
 			tools.eraser.findIntersections(message.data.line, message.data.ids);
-			context.needRedraw = true;
-		} else if (message.data.type === 'select') {
+		} else if (message.data.type === 'select' || message.data.type === 'expand') {
+			if (message.data.type === 'select') {
+				state.selected.clear();
+			}
 			for (let i = 0; i < message.data.ids.length; i++) {
 				state.selected.add(message.data.ids[i]);
 			}
 			toggleSelectionToolbar();
-			context.needRedraw = true;
+		} else if (message.data.type === 'deselect') {
+			for (let i = 0; i < message.data.ids.length; i++) {
+				state.selected.delete(message.data.ids[i]);
+			}
+			toggleSelectionToolbar();
 		}
+		context.needRedraw = true;
 	} else {
 		console.log('unsupported message', message);
 	}
@@ -628,42 +768,168 @@ function receiveMessage(evt) {
 let tools = {
 	drawingColour: '#148',
 	drawingSize: 3,
+	shareOngoing: throttle(20/* ms */, function(type, data) {
+		sendMessage('update', {
+			type: type,
+			data: data(),
+		});
+	}),
 	pencil: {
-		previousLength: 0,
-		shareOngoing: throttle(20/* ms */, function() {
-			let data = {
-				body: state.local().body.slice(tools.pencil.previousLength),
-				size: state.local().size,
-				colour: state.local().colour,
-			};
-			sendMessage('drawing', data);
-			tools.pencil.previousLength = state.local().body.length;
-		}),
+		type: 'freehand',
 		onDown: function(evt) {
-			// TODO differentiate type
-			state.local().type = 'smooth';
-			state.local().size = tools.drawingSize;
-			state.local().colour = tools.drawingColour;
-			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
+			togglePencilToolbar(true);
+			tools[tools.pencil.type].onDown(evt);
 		},
 		onMove: function(evt) {
-			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
-			tools.pencil.shareOngoing();
+			tools[tools.pencil.type].onMove(evt);
 		},
 		onUp: function(evt) {
-			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
-			sendMessage('add', {
-				elements: [{
-					body: state.local().body,
-					type: state.local().type,
-					size: state.local().size,
-					colour: state.local().colour}],
-				undo: false
-			});
-			state.local().body.length = 0;
-			tools.pencil.previousLength = 0;
+			tools[tools.pencil.type].onUp(evt);
+			state.local().type = 'none';
+			delete state.local().data;
 			state.redostack.length = 0;
 			updateState();
+		},
+	},
+	freehand: {
+		previousLength: 0,
+		onDown: function(evt) {
+			state.local().type = 'freehand';
+			state.local().data = {
+				size: tools.drawingSize,
+				colour: tools.drawingColour,
+				type: 'smooth',
+				body: context.abs(evt.offsetX, evt.offsetY),
+			};
+			tools.shareOngoing('freehand', function() {
+				return state.local().data;
+			});
+		},
+		onMove: function(evt) {
+			state.local().data.body.push(...context.abs(evt.offsetX, evt.offsetY));
+			tools.shareOngoing('freehand', function () {
+				let data = {
+					body: state.local().data.body.slice(tools.freehand.previousLength)
+				};
+				tools.freehand.previousLength = state.local().data.body.length;
+				return data;
+			});
+		},
+		onUp: function(evt) {
+			state.local().data.body.push(...context.abs(evt.offsetX, evt.offsetY));
+			sendMessage('add', {
+				elements: [state.local().data],
+				undo: false,
+				select: false,
+			});
+			tools.freehand.previousLength = 0;
+		},
+	},
+	line: {
+		onDown: function(evt) {
+			state.local().type = 'line';
+			state.local().data = {
+				size: tools.drawingSize,
+				colour: tools.drawingColour,
+				type: 'line',
+				body: [
+					...context.abs(evt.offsetX, evt.offsetY),
+					...context.abs(evt.offsetX, evt.offsetY)],
+			};
+			tools.shareOngoing('line', function() {
+				return state.local().data;
+			});
+		},
+		onMove: function(evt) {
+			state.local().data.body.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
+			tools.shareOngoing('line', function() {
+				return state.local().data;
+			});
+		},
+		onUp: function(evt) {
+			state.local().data.body.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
+			sendMessage('add', {
+				elements: [state.local().data],
+				undo: false,
+				select: false,
+			});
+		},
+	},
+	rectangle: {
+		onDown: function(evt) {
+			state.local().type = 'rectangle';
+			state.local().data = {
+				size: tools.drawingSize,
+				colour: tools.drawingColour,
+				type: 'line',
+				body: [
+					...context.abs(evt.offsetX, evt.offsetY), // permanent
+					...context.abs(evt.offsetX, evt.offsetY), // y changes
+					...context.abs(evt.offsetX, evt.offsetY), // x,y changes
+					...context.abs(evt.offsetX, evt.offsetY), // x changes
+					...context.abs(evt.offsetX, evt.offsetY)] // permanent
+			};
+			tools.shareOngoing('rectangle', function() {
+				return state.local().data;
+			});
+		},
+		onMove: function(evt) {
+			let [outerX, outerY] = context.abs(evt.offsetX, evt.offsetY);
+			state.local().data.body.splice(3, 4, outerY, outerX, outerY, outerX);
+			tools.shareOngoing('rectangle', function() {
+				return state.local().data;
+			});
+		},
+		onUp: function(evt) {
+			let [outerX, outerY] = context.abs(evt.offsetX, evt.offsetY);
+			state.local().data.body.splice(3, 4, outerY, outerX, outerY, outerX);
+			sendMessage('add', {
+				elements: [state.local().data],
+				undo: false,
+				select: false,
+			});
+		},
+	},
+	ellipse: {
+		onDown: function(evt) {
+			state.local().type = 'ellipse';
+			state.local().data = {
+				size: tools.drawingSize,
+				colour: tools.drawingColour,
+				type: 'ellipse',
+				body: [
+					...context.abs(evt.offsetX, evt.offsetY), // centre
+					0, 0], // radius x, y
+			};
+			tools.shareOngoing('ellipse', function() {
+				return state.local().data;
+			});
+		},
+		onMove: function(evt) {
+			let [innerX, innerY] = state.local().data.body;
+			let [outerX, outerY] = context.abs(evt.offsetX, evt.offsetY);
+			state.local().data.body.splice(2, 2, Math.abs(outerX - innerX), Math.abs(outerY - innerY));
+			tools.shareOngoing('ellipse', function() {
+				return state.local().data;
+			});
+		},
+		onUp: function(evt) {
+			let [innerX, innerY] = state.local().data.body;
+			let [outerX, outerY] = context.abs(evt.offsetX, evt.offsetY);
+			let [radiusX, radiusY] = [Math.abs(outerX - innerX), Math.abs(outerY - innerY)];
+			state.local().data.body.splice(2, 2, radiusX, radiusY);
+			state.local().data.bounds = {
+				lower_x: innerX - radiusX,
+				upper_x: innerX + radiusX,
+				lower_y: innerY - radiusY,
+				upper_y: innerY + radiusY,
+			};
+			sendMessage('add', {
+				elements: [state.local().data],
+				undo: false,
+				select: false,
+			});
+
 		},
 	},
 	eraser: {
@@ -672,13 +938,13 @@ let tools = {
 		padding: 12,
 		findMatches: throttle(20/* ms */, function() {
 			sendMessage('query', {
-				body: state.local().body,
+				body: state.local().data,
 				padding: tools.eraser.padding,
 				type: 'eraser',
 				contain: false,
 			});
 			// only keep last point
-			state.local().body = state.local().body.slice(-2);
+			state.local().data = state.local().data.slice(-2);
 		}),
 		findIntersections: function(eraser, matchingIds) {
 			let intersects = [];
@@ -699,50 +965,185 @@ let tools = {
 			}
 		},
 		onDown: function(evt) {
-			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
+			state.local().type = 'eraser';
+			state.local().data = context.abs(evt.offsetX, evt.offsetY);
 		},
 		onMove: function(evt) {
-			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
+			state.local().data.push(...context.abs(evt.offsetX, evt.offsetY));
 			tools.eraser.findMatches();
 		},
 		onUp: function(evt) {
 			const ERASE_THRESHOLD = 2;
-			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
+			state.local().data.push(...context.abs(evt.offsetX, evt.offsetY));
 			sendMessage('query', {
-				body: state.local().body,
+				body: state.local().data,
 				padding: tools.eraser.padding,
 				type: 'eraser',
 				contain: false,
 			});
-			state.local().body.length = 0;
+			state.local().type = 'none';
+			delete state.local().data;
 		},
 	},
 	select: {
 		onDown: function(evt) {
-			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
-			state.local().body.push(...context.abs(evt.offsetX, evt.offsetY));
+			state.local().type = 'select';
+			state.local().data = [
+				...context.abs(evt.offsetX, evt.offsetY),
+				...context.abs(evt.offsetX, evt.offsetY)
+			];
 		},
 		onMove: function(evt) {
-			state.local().body.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
+			state.local().data.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
 		},
 		onUp: function(evt) {
-			state.local().body.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
-			sendMessage('query', {
-				body: state.local().body,
+			state.local().data.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
+			let data = {
+				body: state.local().data,
 				padding: 0,
 				type: 'select',
 				contain: true,
-			});
-			state.local().body.length = 0;
+			};
+			if (evt.ctrlKey) {
+				data.type = 'deselect';
+			} else if (evt.shiftKey) {
+				data.type = 'expand';
+			}
+			sendMessage('query', data);
+			state.local().type = 'none';
+			delete state.local().data;
 		},
 	},
 	move: {
 		onDown: function(evt) {
-			
+			state.local().type = 'move';
+			state.local().data = {
+				points: [
+					...context.abs(evt.offsetX, evt.offsetY),
+					...context.abs(evt.offsetX, evt.offsetY)
+				],
+				offset: [0, 0],
+				ids: Array.from(state.selected),
+			};
+			tools.shareOngoing('move', function () {
+				return state.local().data;
+			});
 		},
 		onMove: function(evt) {
+			state.local().data.points.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
+			state.local().data.offset = [
+				state.local().data.points[0] - state.local().data.points[2],
+				state.local().data.points[1] - state.local().data.points[3]
+			];
+			tools.shareOngoing('move', function () {
+				return {
+					offset: state.local().data.offset
+				};
+			});
 		},
 		onUp: function(evt) {
+			state.local().data.points.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
+			state.local().data.offset = [
+				state.local().data.points[0] - state.local().data.points[2],
+				state.local().data.points[1] - state.local().data.points[3]
+			];
+			let elements = [];
+			for (const id of state.local().data.ids) {
+				let element = JSON.parse(JSON.stringify(state.elements[id]));
+				if (element.type === 'line' || element.type === 'smooth') {
+					element.body = element.body.map(function(x, i) {
+						return x - state.local().data.offset[i % 2];
+					});
+				} else if (element.type === 'ellipse') {
+					element.body[0] -= state.local().data.offset[0];
+					element.body[1] -= state.local().data.offset[1];
+				}
+				element.bounds.lower_x -= state.local().data.offset[0];
+				element.bounds.lower_y -= state.local().data.offset[1];
+				element.bounds.upper_x -= state.local().data.offset[0];
+				element.bounds.upper_y -= state.local().data.offset[1];
+				
+				elements.push([id, element]);
+			}
+			sendMessage('move', {
+				elements: elements,
+				offset: state.local().data.offset,
+			});
+
+			/*
+			sendMessage('add', {
+				elements: elements,
+				undo: false,
+				select: true,
+			});
+			sendMessage('del', {
+				ids: state.local().data.ids,
+				undo: false,
+			});*/
+			state.local().type = 'none';
+			delete state.local().data;
+		},
+	},
+	copy: {
+		onDown: function(evt) {
+			state.local().type = 'copy';
+			state.local().data = {
+				points: [
+					...context.abs(evt.offsetX, evt.offsetY),
+					...context.abs(evt.offsetX, evt.offsetY)
+				],
+				offset: [0, 0],
+				ids: Array.from(state.selected),
+			};
+			tools.shareOngoing('copy', function () {
+				return state.local().data;
+			});
+		},
+		onMove: function(evt) {
+			state.local().data.points.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
+			state.local().data.offset = [
+				state.local().data.points[0] - state.local().data.points[2],
+				state.local().data.points[1] - state.local().data.points[3]
+			];
+			tools.shareOngoing('copy', function () {
+				return {
+					offset: state.local().data.offset
+				};
+			});
+		},
+		onUp: function(evt) {
+			state.local().data.points.splice(2, 2, ...context.abs(evt.offsetX, evt.offsetY));
+			state.local().data.offset = [
+				state.local().data.points[0] - state.local().data.points[2],
+				state.local().data.points[1] - state.local().data.points[3]
+			];
+			let elements = [];
+			for (const id of state.local().data.ids) {
+				let element = JSON.parse(JSON.stringify(state.elements[id]));
+				if (element.type === 'line' || element.type === 'smooth') {
+					element.body = element.body.map(function(x, i) {
+						return x - state.local().data.offset[i % 2];
+					});
+				} else if (element.type === 'ellipse') {
+					element.body[0] -= state.local().data.offset[0];
+					element.body[1] -= state.local().data.offset[1];
+				}
+				element.bounds.lower_x -= state.local().data.offset[0];
+				element.bounds.lower_y -= state.local().data.offset[1];
+				element.bounds.upper_x -= state.local().data.offset[0];
+				element.bounds.upper_y -= state.local().data.offset[1];
+
+				elements.push(element);
+			}
+			sendMessage('add', {
+				elements: elements,
+				undo: false,
+				select: true,
+			});
+			setTool('move');
+			state.local().type = 'none';
+			delete state.local().data;
+			state.selected.clear();
 		},
 	},
 	pan: {
@@ -782,7 +1183,7 @@ function getNormal(line) {
 
 function normalize(vector, factor) {
 	let [x, y] = vector;
-	let len = Math.sqrt(x * x + y * y);
+	let len = Math.hypot(x, y); // sqrt(x^2 + y^2)
 	return [(x * factor) / len, (y * factor) / len];
 }
 
@@ -821,6 +1222,11 @@ let convertToPoly = {
 		let dx = bx - ax;
 		let dy = by - ay;
 
+		if (dx === 0 && dy === 0) {
+			// element forms a point
+			return convertToPoly.point(line, radius);
+		}
+
 		let [nx, ny] = getNormal(line);
 		let [ox, oy] = normalize([nx, ny], radius); // width offset
 
@@ -828,6 +1234,55 @@ let convertToPoly = {
 		let verts = [
 			ax + ox, ay + oy, bx + ox, by + oy,
 			ax - ox, ay - oy, bx - ox, by - oy];
+
+		return [axes, verts];
+	},
+	smooth: function(line, radius) {
+		// TODO could be more accurate
+		return convertToPoly.line(line, radius);
+	},
+	ellipse: function(data, radius) {
+		let [x, y, rX, rY] = data;
+
+		let quadrantOffset = [];
+		// convert ellipse quadrant to path
+		// https://stackoverflow.com/a/22707098/4704639
+		const N = 12;
+		for (let i = 0; i < N; i++) {
+			let theta = Math.PI / 2 * i / N;
+			let fi = Math.PI / 2 - Math.atan(Math.tan(theta) * rX / rY);
+			quadrantOffset.push(rX * Math.cos(fi));
+			quadrantOffset.push(rY * Math.sin(fi));
+		}
+		// last point
+		quadrantOffset.push(rX * Math.sin(0), rY * Math.sin(0));
+		
+		// determine axes
+		let axes = [];
+		for (let i = 0; i < N; i++) {
+			let line = quadrantOffset.slice(i * 2);
+			let normal = getNormal(line);
+			axes.push(normal);
+		}
+
+		// convert to points
+		let verts = [];
+		for (let i = 0; i <= N; i++) {
+			let offX, offY = quadrantOffset.slice(i * 2);
+			verts.push(x + offX, y + offY);
+		}
+		for (let i = N; i >= 0; i--) {
+			let offX, offY = quadrantOffset.slice(i * 2);
+			verts.push(x + offX, y - offY);
+		}
+		for (let i = 0; i <= N; i++) {
+			let offX, offY = quadrantOffset.slice(i * 2);
+			verts.push(x - offX, y - offY);
+		}
+		for (let i = N; i >= 0; i--) {
+			let offX, offY = quadrantOffset.slice(i * 2);
+			verts.push(x - offX, y + offY);
+		}
 
 		return [axes, verts];
 	},
@@ -854,25 +1309,13 @@ function separatingAxesIntersection(eraser, element) {
 	let radius = element.size / 2;
 
 	const ERASER_RADIUS = 1;
-	let eraserAxes, eraserVerts;
-
-	if (eraser[0] === eraser[2] && eraser[1] === eraser[3]) {
-		// eraser forms a point
-		[eraserAxes, eraserVerts] = convertToPoly.point(eraser, ERASER_RADIUS);
-	} else {
-		[eraserAxes, eraserVerts] = convertToPoly.line(eraser, ERASER_RADIUS);
-	}
+	let [eraserAxes, eraserVerts] = convertToPoly.line(eraser, ERASER_RADIUS);
 
 	let elementAxes, elementVerts;
-	
-	if (points.length === 4 && points[0] === points[2] && points[1] === points[3]) {
-		// element forms a point
-		[elementAxes, elementVerts] = convertToPoly.point(points, radius);
-		return testSeparatedAxes(eraserVerts, elementVerts, eraserAxes.concat(elementAxes));
-	} else {
+
+	if (element.type === 'line' || element.type === 'smooth') {
 		for (let i = 0; i < points.length - 2; i += 2) {
-			// TODO handle different types of elements
-			[elementAxes, elementVerts] = convertToPoly.line(points.slice(i), radius);
+			[elementAxes, elementVerts] = convertToPoly[element.type](points.slice(i), radius);
 			if (testSeparatedAxes(eraserVerts, elementVerts, eraserAxes.concat(elementAxes))) {
 				// found intersection with one segment, enough for result
 				return true;
@@ -880,6 +1323,11 @@ function separatingAxesIntersection(eraser, element) {
 		}
 		// none of the segments intersect
 		return false;
+	} else if (element.type === 'ellipse') {
+		[elementAxes, elementVerts] = convertToPoly[element.type](points, radius);
+		return testSeparatedAxes(eraserVerts, elementVerts, eraserAxes.concat(elementAxes));
+	} else {
+		console.log('unknown element type ' + element.type + ', can\'t erase');
 	}
 }
 
@@ -967,6 +1415,43 @@ let drawObject = {
 			ctx.fillRect(points[i]-1, points[i + 1]-1, 3, 3);
 		}
 	},
+	ellipse: function(ctx, points) {
+		let [x, y, rX, rY] = points;
+
+		/*
+		let q1off = [];
+
+		// convert ellipse quadrant to path
+		// https://stackoverflow.com/a/22707098/4704639
+		const N = 12;
+		for (let i = 0; i < N; i++) {
+			let theta = (Math.PI / 2) * (i / N);
+			let fi = (Math.PI / 2) - Math.atan(Math.tan(theta) * (rX / rY));
+			q1off.push(rX * Math.cos(fi), rY * Math.sin(fi));
+		}
+		// last point
+		q1off.push(rX * Math.cos(0), rY * Math.sin(0));
+		
+		ctx.beginPath();
+		ctx.moveTo(x + q1off[0], y + q1off[1]);
+		for (let i = 0; i <= N; i++) {
+			ctx.lineTo(x + q1off[i * 2], y + q1off[i * 2 + 1]);
+		}
+		for (let i = N; i >= 0; i--) {
+			ctx.lineTo(x + q1off[i * 2], y - q1off[i * 2 + 1]);
+		}
+		for (let i = 0; i <= N; i++) {
+			ctx.lineTo(x - q1off[i * 2], y - q1off[i * 2 + 1]);
+		}
+		for (let i = N; i >= 0; i--) {
+			ctx.lineTo(x - q1off[i * 2], y + q1off[i * 2 + 1]);
+		}
+		ctx.stroke();*/
+
+		ctx.beginPath();
+		ctx.ellipse(x, y, rX, rY, 0, 0, 2 * Math.PI);
+		ctx.stroke();
+	},
 };
 
 function draw() {
@@ -984,6 +1469,11 @@ function draw() {
 	ctx.resetTransform();
 
 	// clear canvas
+	/*if (context.theme === 'light') {
+		ctx.fillStyle = '#fff';
+	} else {
+		ctx.fillStyle = '#000';
+	}*/
 	ctx.fillStyle = '#fff';
 	ctx.fillRect(0, 0, w, h);
 
@@ -991,6 +1481,11 @@ function draw() {
 	ctx.translate(context.offsetX, context.offsetY);
 
 	// draw grid
+	/*if (context.theme === 'light') {
+		ctx.strokeStyle = '#ccc';
+	} else {
+		ctx.strokeStyle = '#222';
+	}*/
 	ctx.strokeStyle = '#ccc';
 
 	let gridSize = 20 * context.scale;
@@ -1027,6 +1522,32 @@ function draw() {
 	// draw content
 	ctx.lineJoin = 'round';
 	ctx.lineCap = 'round';
+
+	let ongoingDraw = [];
+	let ongoingMove = {};
+	for (const [client, element] of Object.entries(state.ongoing)) {
+		if (element.type === 'select') {
+			// we only ever see our selection, no sharing
+			ctx.lineWidth = 2;
+			ctx.strokeStyle = '#000';
+			ctx.setLineDash([5, 5]);
+			drawObject.rect(ctx, element.data, 0);
+			ctx.setLineDash([]);
+		} else if (element.type === 'freehand' || element.type === 'line' || element.type === 'arrow'
+			|| element.type === 'rectangle' || element.type === 'ellipse') {
+			ongoingDraw.push(element.data);
+		} else if (element.type === 'move') {
+			for (let i = 0; i < element.data.ids.length; i++) {
+				ongoingMove[element.data.ids[i]] = element.data.offset;
+			}
+		} else if (element.type === 'copy') {
+			for (let i = 0; i < element.data.ids.length; i++) {
+				let id = element.data.ids[i];
+				ongoingDraw.push(state.elements[id]);
+				ongoingMove[id] = element.data.offset;
+			}
+		}
+	}
 	
 	for (const [id, element] of Object.entries(state.elements)) {
 		let viewport_padding = element.size + 2; // px, scaled
@@ -1035,37 +1556,49 @@ function draw() {
 		let viewport_lower_y = (0 - context.offsetY - viewport_padding) / context.scale;
 		let viewport_upper_y = (h - context.offsetY + viewport_padding) / context.scale;
 		let {lower_x, lower_y, upper_x, upper_y} = element.bounds;
+		
+		if (ongoingMove[id]) {
+			lower_x -= ongoingMove[id][0];
+			lower_y -= ongoingMove[id][1];
+			upper_x -= ongoingMove[id][0];
+			upper_y -= ongoingMove[id][1];
+		}
 		let inBounds = lower_x <= viewport_upper_x && upper_x >= viewport_lower_x
 					&& lower_y <= viewport_upper_y && upper_y >= viewport_lower_y;
+
 		if (inBounds) {
 			// only draw elements potentially contained in viewport
 			ctx.lineWidth = element.size;
 			ctx.strokeStyle = element.colour;
 			ctx.fillStyle = element.colour;
-			drawObject[element.type](ctx, element.body);
+			let body = element.body;
+			if (ongoingMove[id]) {
+				if (element.type === 'line' || element.type === 'smooth') {
+					body = element.body.map(function(x, i) {
+						return x - ongoingMove[id][i % 2];
+					});
+				} else if (element.type === 'ellipse') {
+					body = element.body.slice();
+					body[0] -= ongoingMove[id][0];
+					body[1] -= ongoingMove[id][1];
+				}
+
+			}
+			drawObject[element.type](ctx, body);
 		}
 	}
 
-	for (const [client, element] of Object.entries(state.ongoing)) {
-		if (Number(client) === state.whoami) {
-			if (state.activeTool === 'eraser') {
-				continue; // skip drawing own line if we're using ongoing for erasing purposes
-			}
-			if (state.activeTool === 'select' && element.body.length > 2) {
-				ctx.lineWidth = 2;
-				ctx.strokeStyle = '#000';
-				ctx.setLineDash([5, 5]);
-				drawObject.rect(ctx, element.body, 0);
-				ctx.setLineDash([]);
-				continue; // special drawing procedure
-			}
-		}
+	for (const element of ongoingDraw) {
 		if (element.body.length >= 2) {
 			ctx.lineWidth = element.size;
 			ctx.strokeStyle = element.colour;
 			ctx.fillStyle = element.colour;
 			// TODO ongoing type
-			drawObject.smooth(ctx, element.body);
+			if (element.type) {
+				drawObject[element.type](ctx, element.body);
+			} else {
+				console.log('received incomplete ongoing element');
+			}
 		}
 	}
 
@@ -1075,6 +1608,12 @@ function draw() {
 	for (const id of state.selected) {
 		let element = state.elements[id];
 		let {lower_x, lower_y, upper_x, upper_y} = element.bounds;
+		if (ongoingMove[id]) {
+			lower_x -= ongoingMove[id][0];
+			lower_y -= ongoingMove[id][1];
+			upper_x -= ongoingMove[id][0];
+			upper_y -= ongoingMove[id][1];
+		}
 		drawObject.rect(ctx, [lower_x, lower_y, upper_x, upper_y], element.size/2);
 	}
 	ctx.setLineDash([]);
