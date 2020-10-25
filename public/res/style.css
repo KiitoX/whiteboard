@@ -2,12 +2,16 @@
  * BASIC STYLE
  */
 
+html {
+	height: 100%;
+}
 body {
 	font-family: Ubuntu, sans-serif;
 	text-align: center;
 	margin: 0 !important;
 	width: 100vw;
-	min-height: 100vh;
+	height: inherit;
+	max-height: 100vh;
 	overflow: hidden;
 }
 h1 {
@@ -59,7 +63,7 @@ body[theme=dark] {
 }
 
 .container {
-	height: 100vh;
+	height: inherit;
 	display: grid;
 	grid-template-rows: auto;
 	grid-template-columns: auto 1fr auto;
@@ -176,7 +180,7 @@ button[wip] i {
 	color: var(--negative-fg-colour);
 }
 
-.toolbar button#theme {
+.toolbar button#settings {
 	height: var(--button-size);
 	margin-top: auto;
 	grid-row: -1;
@@ -200,7 +204,8 @@ button[wip] i {
 	margin: 6px 0;
 
 	overflow: hidden;
-	transition: max-height ease-in 300ms,
+	transition: min-width ease-in 300ms,
+				max-height ease-in 300ms,
 				margin ease-in 200ms,
 				opacity ease-in 400ms;
 }
@@ -209,7 +214,7 @@ button[wip] i {
 	max-height: 274px;
 }
 .toolbar [group=pencil] > div {
-	max-height: 414px;
+	max-height: 274px;
 }
 
 .toolbar:not([visible=selection]) [group=selection] > div,
@@ -291,6 +296,8 @@ dialog {
 	display: grid;
 	grid-gap: 6px;
 
+	height: unset;
+
 	pointer-events: all;
 	
 	color: var(--fg-colour);
@@ -331,13 +338,48 @@ dialog#dialog-colour {
 	border-radius: 0 4px 4px 0;
 	box-shadow: #333 0 0 4px;
 }
-dialog#dialog-colour #colour-preview {
+dialog#dialog-colour #colour-palette {
 	grid-column: span 3;
 
-	height: 80px;
+	display: grid;
+	grid-gap: 6px;
+	grid-template-columns: repeat(4, 1fr);
+	
+	--button-size: 48px;
+}
+dialog#dialog-colour button.palette {
+	height: var(--button-size);
+	background: var(--colour);
+}
+dialog#dialog-colour hr {
+	grid-column: span 4;
+	margin: 0 -6px;
+
+	border: none;
+	border-top: 1px solid var(--border-colour);
+}
+[palette=hide] dialog#dialog-colour .default-colours {
+	display: none;
+}
+dialog#dialog-colour .default-colours,
+dialog#dialog-colour .custom-colours {
+	display: contents;
+}
+dialog#dialog-colour #colour-preview {
+	grid-column: 1 / span 3;
+
 	border-radius: 8px;
 	
 	background: var(--drawing-colour);
+}
+dialog#dialog-colour .toolbar {
+	padding: 0;
+	grid-template: unset;
+	border: none;
+}
+dialog#dialog-colour .toolbar button {
+	grid-column: 1;
+	grid-row: unset;
 }
 dialog#dialog-colour label {
 	font-family: monospace;
@@ -346,18 +388,6 @@ dialog#dialog-colour label {
 dialog#dialog-colour input[type="text"] {
 	grid-column: span 3;
 	font-family: monospace;
-}
-dialog#dialog-colour #colour-palette {
-	grid-column: span 3;
-
-	display: grid;
-	grid-gap: 6px;
-	grid-template-columns: repeat(4, auto);
-}
-dialog#dialog-colour button {
-	--button-size: 48px;
-	height: var(--button-size);
-	background: var(--colour);
 }
 
 dialog#dialog-clear {
@@ -387,7 +417,104 @@ dialog#dialog-clear button#confirm-clear {
 	color: var(--negative-fg-colour);
 }
 
+dialog#dialog-settings {
+	margin: auto;
+	align-self: center;
+}
+dialog#dialog-settings button {
+	min-width: calc(var(--button-size) + .8em);
+}
+[palette=show] dialog#dialog-settings #palette-hidden {
+	display: none;
+}
+[palette=hide] dialog#dialog-settings #palette-shown {
+	display: none;
+}
+
 canvas {
 	display: block;
 	touch-action: none;
+}
+
+@media screen and (max-aspect-ratio: 1/1) {
+	.container {
+		grid-template-rows: 1fr auto;
+		grid-template-columns: 1fr auto;
+	}
+	.container > .toolbar {
+		grid-row: 2;
+		grid-column: 1 / span 2;
+
+		row-gap: 0;
+		column-gap: 6px;
+
+		grid-template-rows: 1fr;
+		grid-template-columns: repeat(auto-fit, minmax(min-content, 0));
+
+		overflow-x: scroll;
+		border-top: 1px solid var(--border-colour);
+	}
+	.toolbar [group] {
+		grid-row: 1;
+		grid-auto-flow: column;
+	}
+	.toolbar [group] > div {
+		margin: 0 6px;
+		
+		grid-auto-flow: column;
+
+	}
+	.toolbar [group=selection] > div {
+		min-width: 242px;
+	}
+	.toolbar [group=pencil] > div {
+		min-width: 242px;
+	}
+	.toolbar:not([visible=selection]) [group=selection] > div,
+	.toolbar:not([visible=pencil]) [group=pencil] > div {
+		min-width: 0;
+		max-height: unset;
+	}
+	.container > .toolbar button {
+		height: calc(var(--button-size) + 12px);
+	}
+	.toolbar button {
+		grid-row: 1;
+		grid-column: unset;
+
+		min-height: unset;
+		min-width: var(--button-size);
+		width: unset;
+
+		white-space: nowrap;
+	}
+	.toolbar button#settings {
+		grid-row: 1;
+		grid-column: -1;
+		
+		height: calc(var(--button-size) + 12px);
+		margin-left: auto;
+	}
+	.toolbar hr {
+		margin: -6px 0;
+		
+		grid-row: 1;
+		grid-column: unset;
+
+		border-right: 1px solid var(--border-colour);
+	}
+	.whiteboard {
+		grid-column: 1 / span 2;
+	}
+	.status {
+		grid-column: 2;
+	}
+	dialog#dialog-size {
+		bottom: 0;
+		margin-left: 48px;
+	}
+	dialog#dialog-colour {
+		bottom: 0;
+		margin-left: 142px;
+	}
 }

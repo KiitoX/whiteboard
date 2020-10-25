@@ -3,11 +3,13 @@
 <html>
 	<head>
 		<title>Whiteboard</title>
-		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1">
+		<!--link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.13.0/css/all.min.css"/-->
 		<!-- This webfont is found at https://github.com/KDE/breeze-icons under GPL and can be built by yourself -->
 		<link rel="stylesheet" type="text/css" href="/breeze/22/icons.css"/>
 		<link rel="stylesheet" type="text/css" href="res/style.css"/>
-		<script type="text/javascript" src="res/whiteboard.js"></script>
+		<script src="https://code.jquery.com/pep/0.4.3/pep.js"></script>		
+		<script type="module" src="res/whiteboard.js"></script>
 	</head>
 	<body>
 		<div class="container">
@@ -37,12 +39,12 @@
 					</div>
 					<hr/>
 				</div>
-				<button id="pan" title="Pan">
+				<button id="pan" title="Pan" active>
 					<i class="icon icon_hand"></i>
 					<p>Pan</p>
 				</button>
 				<div group="pencil">
-					<button id="pencil" tool="freehand" title="Freehand" active>
+					<button id="pencil" tool="freehand" title="Freehand">
 						<i class="icon icon_draw-freehand"></i>
 						<i class="icon icon_draw-line"></i>
 						<i class="icon icon_draw-arrow"></i>
@@ -96,13 +98,8 @@
 					<i class="icon icon_edit-redo"></i>
 					<p>Redo</p>
 				</button>
-				<hr/>
-				<button id="clear" title="Clear Whiteboard">
-					<i class="icon icon_edit-delete"></i>
-					<p>Clear White-board</p>
-				</button>
-				<button id="theme" title="Toggle Theme">
-					<i class="icon icon_contrast"></i>
+				<button id="settings" title="Open settings">
+					<i class="icon icon_settings-configure"></i>
 					<p></p>
 				</button>
 			</div>
@@ -117,16 +114,32 @@
 					</dialog>
 					<dialog id="dialog-colour">
 						<div id="colour-palette">
-							<button style="--colour: #000"></button> 
-							<button style="--colour: #148"></button> 
-							<button style="--colour: #184"></button> 
-							<button style="--colour: #d00"></button> 
-							<button style="--colour: #666"></button> 
-							<button style="--colour: #48e"></button> 
-							<button style="--colour: #4c0"></button> 
-							<button style="--colour: #e90"></button> 
+							<div class="default-colours">
+								<button class="palette" style="--colour: #000"></button> 
+								<button class="palette" style="--colour: #148"></button> 
+								<button class="palette" style="--colour: #184"></button> 
+								<button class="palette" style="--colour: #d00"></button> 
+								<button class="palette" style="--colour: #666"></button> 
+								<button class="palette" style="--colour: #48e"></button> 
+								<button class="palette" style="--colour: #4c0"></button> 
+								<button class="palette" style="--colour: #e90"></button>
+								<hr>
+							</div>
+							<div class="custom-colours"></div>
+							<div id="colour-preview"></div>
+							<div class="toolbar">
+								<button id="addcolour" title="Add colour">
+									<p>Add</p>
+								</button>
+								<button id="delcolour" title="Remove colour">
+									<p>Del</p>
+								</button>
+								<button id="pipette" title="Pick colour">
+									<i class="icon icon_color-picker"></i>
+									<p>Pick</p>
+								</button>
+							</div>
 						</div>
-						<div id="colour-preview"></div>
 						<label for="red">R:</label>
 						<input type="range" name="red" id="range-red" min="0" max="255" step="1" value="17" title="Scroll for fine adjustment"/>
 						<label for="red" id="value-red">&nbsp;17</label>
@@ -146,8 +159,34 @@
 						<button id="confirm-clear">Clear</button>
 						<button id="cancel-clear">Cancel</button>
 					</dialog>
+					<dialog id="dialog-settings" class="toolbar">
+						<button id="image" title="Insert Image">
+							<i class="icon icon_insert-image"></i>
+							<p>Insert Image (32MB limit)</p>
+						</button>
+						<input type="file" id="file-select" accept="image/*" style="display: none"/>
+						<hr/>
+						<button id="clear" title="Clear whiteboard">
+							<i class="icon icon_edit-delete"></i>
+							<p>Clear White&shy;board</p>
+						</button>
+						<hr/>
+						<button id="theme" title="Toggle theme">
+							<i class="icon icon_contrast"></i>
+							<p>Toggle theme</p>
+						</button>
+						<button id="palette" title="Toggle default palette">
+							<i class="icon icon_view-list-icons"></i>
+							<p><span id="palette-hidden">Show</span><span id="palette-shown">Hide</span> default palette</p>
+						</button>
+						<hr/>
+						<button id="close-settings" title="Close settings">
+							<i class="icon icon_edit-delete-remove"></i>
+							<p>Close settings</p>
+						</button>
+					</dialog>
 				</div>
-				<canvas width=600 height=600>
+				<canvas width=600 height=600 touch-action="none">
 					<p>Your browser either doesn't support HTML5 Canvas or you have disabled JavaScript</p>
 					<p>Both of these are hard requirements for this page to function.</p>
 				</canvas>

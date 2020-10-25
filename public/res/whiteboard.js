@@ -34,12 +34,29 @@ function fmod(a, n) {
 	return a - n * Math.floor(a / n);
 }
 
+// https://stackoverflow.com/a/52171480/4704639
+function cyrb53(str, seed = 0) {
+	let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+	for (let i = 0, ch; i < str.length; i++) {
+		ch = str.charCodeAt(i);
+		h1 = Math.imul(h1 ^ ch, 2654435761);
+		h2 = Math.imul(h2 ^ ch, 1597334677);
+	}
+	h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
+	h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
+	return 4294967296 * (2097151 & h2) + (h1>>>0);
+};
+
 let state = {
 	websocket: null,
 	whoami: null,
 	clients: null,
-	activeTool: 'pencil',
+	activeTool: 'pan',
 	toolInUse: null, // "pan" OR "active"
+	// TODO temporary mobile zoom
+	pointers: new Array(),
+	lastPointerDist: -1,
+	didPinch: false,
 	ongoing: {
 		// client_id: {
 		//   TODO:
@@ -84,7 +101,11 @@ let state = {
 		//  > "del": [element data]
 	],
 	redostack: [],
+	images: {
+		// url_md5: 
+	},
 };
+window.state = state;
 
 function init() {
 	let whiteboard = document.querySelector('.whiteboard');
@@ -102,16 +123,16 @@ function init() {
 	//document.addEventListener('focus', console.log);
 
 	// register canvas input handler
-	if (window.PointerEvent) {
-		// TODO ff mobile compat, break up handlePointer into more logical subassemblies :>
-		// https://www.w3.org/TR/pointerevents2/
-	}
-	canvas.addEventListener('pointerdown', handlePointer, false);
-	canvas.addEventListener('pointerup', handlePointer, false);
-	canvas.addEventListener('pointerout', handlePointer, false);
-	canvas.addEventListener('pointercancel', handlePointer, false);
-	canvas.addEventListener('pointermove', handlePointer, false);
+	canvas.addEventListener('pointerdown', handlePointerDown, false);
+	canvas.addEventListener('pointerup', handlePointerUp, false);
+	canvas.addEventListener('pointerout', handlePointerUp, false);
+	canvas.addEventListener('pointercancel', handlePointerUp, false);
+	canvas.addEventListener('pointermove', handlePointerMove, false);
 	canvas.addEventListener('wheel', handleWheel);
+
+	canvas.addEventListener('dragenter', dragEnterCanvas);
+	canvas.addEventListener('dragover', dragOverCanvas);
+	canvas.addEventListener('drop', dropImage);
 
 	// add keypress listener
 	document.addEventListener('keydown', handleKeyDown);
@@ -119,6 +140,13 @@ function init() {
 	// handle resizing
 	window.addEventListener('resize', handleResize);
 	handleResize(null);
+
+	// toolbar desktop
+	document.querySelector('.container .toolbar').addEventListener('wheel', function(evt) {
+		if (evt.currentTarget.scrollWidth > evt.currentTarget.scrollHeight && evt.deltaY != 0) {
+			evt.currentTarget.scrollBy({top: 0, left: evt.deltaY * 10 * window.devicePixelRatio, behavior: 'auto'});
+		}
+	});
 
 	// register button handlers
 	document.querySelector('#undo').addEventListener('click', undo);
@@ -146,6 +174,7 @@ function init() {
 	}
 	
 	document.querySelector('#colour').addEventListener('click', toggleColourSelector);
+	document.querySelector('#colour-preview').addEventListener('click', toggleColourSelector);
 	document.querySelector('#range-red').addEventListener('input', updateColour);
 	document.querySelector('#range-green').addEventListener('input', updateColour);
 	document.querySelector('#range-blue').addEventListener('input', updateColour);
@@ -154,17 +183,30 @@ function init() {
 	document.querySelector('#range-blue').addEventListener('wheel', selectSlider);
 	document.querySelector('#manual-colour').addEventListener('change', manualColour);
 
-	setDrawingColour('#148');
-
-	for (let button of document.querySelectorAll('#colour-palette button')) {
+	for (let button of document.querySelectorAll('#colour-palette button.palette')) {
 		button.addEventListener('click', selectColour);
 	}
+
+	initCustomColours();
+
+	setDrawingColour('#148');
+
+	document.querySelector('#addcolour').addEventListener('click', addCustomColour);
+	document.querySelector('#delcolour').addEventListener('click', removeCustomColour);
+	document.querySelector('#pipette').addEventListener('click', changeTool);
+
+	document.querySelector('#settings').addEventListener('click', openSettingsDialog);
+	document.querySelector('#close-settings').addEventListener('click', closeDialog);
+
+	document.querySelector('#image').addEventListener('click', openImage);
+	document.getElementById('file-select').addEventListener('change', insertImage);
 
 	document.querySelector('#clear').addEventListener('click', openClearConfirmation);
 	document.querySelector('#dialog-clear #confirm-clear').addEventListener('click', clearWhiteboard);
 	document.querySelector('#dialog-clear #cancel-clear').addEventListener('click', closeDialog);
 
 	document.querySelector('#theme').addEventListener('click', toggleTheme);
+	document.querySelector('#palette').addEventListener('click', toggleDefaultPalette);
 
 	updateState();
 
@@ -177,48 +219,120 @@ function init() {
 	window.requestAnimationFrame(draw);
 }
 
-function handlePointer(evt) {
+const SCROLL_PINCH_DISTANCE = 12;
+
+function handlePointerMove(evt) {
 	evt.preventDefault();
 	
-	if (evt.type === 'pointermove') {
-		if (state.toolInUse === 'active') {
+	if (state.toolInUse === 'active') {
+		// TODO temporary mobile zoom
+		if (state.activeTool === 'pan') {
+			let evtIndex = state.pointers.findIndex((elem) => elem.pointerId == evt.pointerId);
+			state.pointers.splice(evtIndex, 1, evt);
+
+			if (state.pointers.length > 1) {
+				let p0 = state.pointers[0];
+				let p1 = state.pointers[1];
+				let pointerDist = Math.hypot(p0.clientX - p1.clientX, p0.clientY - p1.clientY);
+
+				if (state.lastPointerDist > 0) {
+					if (Math.abs(state.lastPointerDist - pointerDist) > SCROLL_PINCH_DISTANCE * window.devicePixelRatio) {
+						if (pointerDist > state.lastPointerDist) {
+							// pinch out -> zoom in
+							handleWheel({deltaY: -1, currentTarget: context.canvas, shiftKey: true,
+								offsetX: window.devicePixelRatio * (p0.offsetX + p1.offsetX) / 2,
+								offsetY: window.devicePixelRatio * (p0.offsetY + p1.offsetY) / 2});
+						} else if (pointerDist < state.lastPointerDist) {
+							// pinch in -> zoom out
+							handleWheel({deltaY: +1, currentTarget: context.canvas, shiftKey: true,
+								offsetX: window.devicePixelRatio * (p0.offsetX + p1.offsetX) / 2,
+								offsetY: window.devicePixelRatio * (p0.offsetY + p1.offsetY) / 2});
+						}
+						state.lastPointerDist = pointerDist;
+						state.didPinch = true;
+					}
+				} else {
+					state.lastPointerDist = pointerDist;
+				}
+				return;
+			} else {
+				tools[state.activeTool].onMove(evt);
+				context.needRedraw = true;
+			}
+		} else if (state.pointers[0].pointerId === evt.pointerId) {
 			tools[state.activeTool].onMove(evt);
 			context.needRedraw = true;
-		} else if (state.toolInUse === 'pan') {
-			tools.pan.onMove(evt);
-			context.needRedraw = true;
 		}
-	} else if (evt.type === 'pointerdown') {
-		if (evt.button === 0 && document.hasFocus()) {
-			// TODO detect somehow if a user has raised this window 
-			// by clicking on the canvas, we don't really want that to
-			// get translated to a drawn line
+	} else if (state.toolInUse === 'pan') {
+		tools.pan.onMove(evt);
+		context.needRedraw = true;
+	}
+}
 
-			// TODO this in not really doing what I want, it's interesting though
-			// I should really consider moving from this kinda obsolete(??) pointer
-			// api to the separate mouse/touch/pen events, even if it sucks
-			//context.canvas.setPointerCapture(evt.pointerId);
-			state.toolInUse = 'active';
-			tools[state.activeTool].onDown(evt);
-			context.needRedraw = true;
-		} else if (evt.button === 2 || evt.button === 1) {
-			state.toolInUse = 'pan';
-			tools.pan.onDown(evt);
-			context.needRedraw = true;
+function handlePointerDown(evt) {
+	evt.preventDefault();
+	
+	if (evt.button === 0 && document.hasFocus()) {
+		state.pointers.push(evt);
+
+		if (state.pointers.length > 1) {
+			return;
 		}
-	} else if (evt.type === 'pointerup' || evt.type === 'pointerout' || evt.type === 'pointercancel') {
-		if (state.toolInUse === 'active') {
-			/*if (evt.type !== 'pointerout') {
+
+		// TODO detect somehow if a user has raised this window 
+		// by clicking on the canvas, we don't really want that to
+		// get translated to a drawn line
+
+		// TODO this in not really doing what I want, it's interesting though
+		// I should really consider moving from this kinda obsolete(??) pointer
+		// api to the separate mouse/touch/pen events, even if it sucks
+		//context.canvas.setPointerCapture(evt.pointerId);
+		state.toolInUse = 'active';
+		tools[state.activeTool].onDown(evt);
+		context.needRedraw = true;
+	} else if (evt.button === 2 || evt.button === 1) {
+		state.toolInUse = 'pan';
+		tools.pan.onDown(evt);
+		context.needRedraw = true;
+	}
+}
+
+function handlePointerUp(evt) {
+	evt.preventDefault();
+	
+	if (state.toolInUse === 'active') {
+		let evtIndex = state.pointers.findIndex((elem) => elem.pointerId == evt.pointerId);
+		if (evtIndex < 0) {
+			// ignore double fire event
+			return;
+		}
+		state.pointers.splice(evtIndex, 1);
+
+		if (state.activeTool === 'pan') {
+			if (state.pointers.length < 2) {
+				state.lastPointerDist = -1;
+			}
+			if (state.didPinch) {
+				if (state.pointers.length === 1) {
+					tools.pan.onDown(state.pointers[0]);
+					state.didPinch = false;
+				}
+				return;
+			}
+		} else if (state.pointers.length > 0) {
+			return;
+		}
+
+		/*if (evt.type !== 'pointerout') {
 				context.canvas.releasePointerCapture(evt.pointerId);
 			}*/
-			state.toolInUse = null;
-			tools[state.activeTool].onUp(evt);
-			context.needRedraw = true;
-		} else if (state.toolInUse === 'pan') {
-			state.toolInUse = null;
-			tools.pan.onUp(evt);
-			context.needRedraw = true;
-		}
+		state.toolInUse = null;
+		tools[state.activeTool].onUp(evt);
+		context.needRedraw = true;
+	} else if (state.toolInUse === 'pan') {
+		state.toolInUse = null;
+		tools.pan.onUp(evt);
+		context.needRedraw = true;
 	}
 }
 
@@ -242,9 +356,9 @@ function handleWheel(evt) {
 	let tX = context.offsetX, tY = context.offsetY;
 	
 	if (state.toolInUse === 'active' || evt.shiftKey) {
-		// center scroll on canvas mouse coordinates
-		oX = evt.offsetX;
-		oY = evt.offsetY;
+		let mX = evt.offsetX, mY = evt.offsetY; // mouse coordinates on canvas
+		oX = mX;
+		oY = mY;
 	}
 
 	// my legendary "scroll-at-mouse-position" code I wrote a few years back
@@ -277,6 +391,13 @@ function handleKeyDown(evt) {
 			}
 			updateState();
 		}
+		if (state.activeTool === 'select') {
+			if (evt.key === 'Escape') {
+				clearSelection();
+			} else if (evt.key === 'Delete') {
+				deleteSelection();
+			}
+		}
 	}
 }
 
@@ -293,34 +414,6 @@ function handleResize(evt) {
 	context.needRedraw = true;
 }
 
-function loadTheme() {
-	let match = document.cookie.match(/theme=(.+?)(;|$)/);
-
-	if (match) {
-		setTheme(match[1]);
-	} else {
-		setTheme('light');
-	}
-}
-
-function toggleTheme(evt) {
-	let body = document.querySelector('body');
-	let theme = body.getAttribute('theme');
-	if (theme === 'light') {
-		setTheme('dark');
-	} else {
-		setTheme('light');
-	}
-}
-
-function setTheme(theme) {
-	let body = document.querySelector('body');
-	body.setAttribute('theme', theme);
-	document.cookie = `theme=${theme};max-age=8640000;sameSite=strict`;
-	context.theme = theme;
-	context.needRedraw = true;
-}
-
 function undo(evt) {
 	if (!(evt.currentTarget).hasAttribute('disabled')) {
 		let lastAction = state.undostack.pop();
@@ -328,6 +421,13 @@ function undo(evt) {
 			sendMessage('del', {ids: lastAction.data, undo: true});
 		} else if (lastAction.type === 'deleted') {
 			sendMessage('add', {elements: lastAction.data, undo: true, select: false});
+		} else if (lastAction.type === 'moved') {
+			let ids = lastAction.data.idmap.map(([_, id]) => id);
+			let [offX, offY] = lastAction.data.offset;
+			let movedElements = tools.move.moveElements(ids, [-offX, -offY], true);
+			sendMessage('move', {elements: movedElements, offset: [-offX, -offY], undo: true});
+		} else {
+			console.error('undo action not handled for type', lastAction.type);
 		}
 		updateState();
 	}
@@ -340,6 +440,13 @@ function redo(evt) {
 			sendMessage('del', {ids: lastUndo.data, undo: false});
 		} else if (lastUndo.type === 'deleted') {
 			sendMessage('add', {elements: lastUndo.data, undo: false, select: false});
+		} else if (lastUndo.type === 'moved') {
+			let ids = lastUndo.data.idmap.map(([_, id]) => id);
+			let [offX, offY] = lastUndo.data.offset;
+			let movedElements = tools.move.moveElements(ids, [-offX, -offY], true);
+			sendMessage('move', {elements: movedElements, offset: [-offX, -offY], undo: false});
+		} else {
+			console.error('redo action not handled for type', lastUndo.type);
 		}
 		updateState();
 	}
@@ -371,7 +478,9 @@ function changeTool(evt) {
 
 	document.querySelector('#dialog-clear').removeAttribute('open');
 	document.querySelector('#dialog-size').removeAttribute('open');
-	document.querySelector('#dialog-colour').removeAttribute('open');
+	if (evt.currentTarget.id !== 'pipette') {
+		document.querySelector('#dialog-colour').removeAttribute('open');
+	}
 	toggleSelectionToolbar();
 	togglePencilToolbar(activeTool.id !== 'pencil');
 }
@@ -501,6 +610,10 @@ function setDrawingColour(colour) {
 	let bL = (b / 255.0) <= 0.03928 ? (b / 255) / 12.92 : Math.pow((b / 255 + 0.055) / 1.055, 2.4);
 	let luma = 0.2126 * rL + 0.7152 * gL + 0.0722 * bL;
 	document.querySelector('#colour').toggleAttribute('bright', luma > 0.179);
+
+	// custom palette edit status
+	let paletteIndex = customColours.findIndex((entry) => entry[0] === hex);
+	document.querySelector('#delcolour').toggleAttribute('disabled', paletteIndex < 0);
 }
 
 function manualColour(evt) {
@@ -526,7 +639,152 @@ function updateColour(evt) {
 	setDrawingColour(rgb);
 }
 
-function openClearConfirmation(evt) {
+let customColours = [];
+
+function addCustomColourElement(colour) {
+	let container = document.querySelector('.custom-colours');
+
+	let patch = document.createElement('button');
+	patch.classList.add('palette');
+	patch.style.setProperty('--colour', colour);
+	patch.addEventListener('click', selectColour);
+	container.appendChild(patch);
+
+	customColours.push([colour, patch]);
+	
+	// custom palette edit status
+	document.querySelector('#delcolour').removeAttribute('disabled');
+}
+
+function initCustomColours() {
+	let matchDefault = document.cookie.match(/defaultPalette=(.+?)(;|$)/);
+	if (matchDefault) {
+		toggleDefaultPalette(matchDefault[1]);
+	} else {
+		toggleDefaultPalette('show');
+	}
+
+	let match = document.cookie.match(/palette=(.*?)(;|$)/);
+	
+	if (match && match[1]) {
+		let colours = match[1].split(',');
+		for (let i = 0; i < colours.length; i++) {
+			addCustomColourElement(colours[i]);
+		}
+	}
+}
+
+function saveCustomColours() {
+	let palette = '';
+	for (let i = 0; i < customColours.length; i++) {
+		if (i > 0) {
+			palette += ',';
+		}
+		let colour = customColours[i][0];
+		palette += colour;
+	}
+
+	document.cookie = `palette=${palette};max-age=8640000;sameSite=strict`;
+}
+
+function addCustomColour(evt) {
+	addCustomColourElement(tools.drawingColour);
+	saveCustomColours();
+}
+
+function removeCustomColour(evt) {
+	for (let i = customColours.length - 1; i >= 0; i--) {
+		if (customColours[i][0] === tools.drawingColour) {
+			let [[colour, patch]] = customColours.splice(i, 1);
+			patch.parentNode.removeChild(patch);
+			saveCustomColours();
+			return;
+		}
+	}
+}
+
+function toggleDefaultPalette(setting) {
+	if (setting.currentTarget) {
+		let current = document.body.getAttribute('palette');
+		setting = current === 'show' ? 'hide' : 'show';
+	}
+	document.body.setAttribute('palette', setting);
+	document.cookie = `defaultPalette=${setting};max-age=8640000;sameSite=strict`;
+}
+
+function dragEnterCanvas(evt) {
+	evt.preventDefault();
+}
+
+function dragOverCanvas(evt) {
+	evt.preventDefault();
+}
+
+function dropImage(evt) {
+	evt.preventDefault();
+	
+	console.log(evt, evt.dataTransfer);
+	if (evt.dataTransfer.files[0].type.startsWith('image/')) {
+		insertImage(evt);
+	}
+}
+
+function openImage() {
+	let fileSelect = document.getElementById('file-select');
+	fileSelect.click();
+}
+
+function insertImage(evt) {
+	let file, centreImage = false, mouseX, mouseY;
+	if (evt.dataTransfer) {
+		file = evt.dataTransfer.files[0];
+		mouseX = evt.layerX;
+		mouseY = evt.layerY;
+	} else {
+		file = evt.currentTarget.files[0];
+		centreImage = true;
+	}
+
+	if (file.type.startsWith('image/')) {
+		let reader = new FileReader();
+		reader.onload = async function(evt) {
+			let dataUrl = reader.result;
+
+			let image = await window.createImageBitmap(file);
+			let x, y;
+			if (centreImage) {
+				x = Math.floor((context.canvas.width / context.scale - image.width) / 2) - context.offsetX / context.scale;
+				y = Math.floor((context.canvas.height / context.scale - image.height) / 2) - context.offsetY / context.scale;
+			} else {
+				x = (mouseX - context.offsetX) / context.scale;
+				y = (mouseY - context.offsetY) / context.scale;
+			}
+
+			/*
+			let [x, y] = context.abs(Math.floor(image.width / 2), Math.floor(image.height / 2));
+			x -= context.offsetX;
+			y -= context.offsetY;
+			let x = Math.floor(image.width / 2) - context.offsetX;
+			let y = Math.floor(image.height / 2) - context.offsetY;*/
+			let bounds = {
+				lower_x: x,
+				lower_y: y,
+				upper_x: x + image.width,
+				upper_y: y + image.height,
+			};
+
+			let imageElement = {type: 'image', body: dataUrl, bounds: bounds};
+			sendMessage('add', {elements: [imageElement], undo: false, select: true});
+
+			document.querySelector('#dialog-settings').removeAttribute('open');
+		};
+		reader.readAsDataURL(file);
+
+		setTool('move');
+	}
+}
+
+function openClearConfirmation() {
 	document.querySelector('#dialog-clear').setAttribute('open', '');
 	document.querySelector('#dialog-size').removeAttribute('open');
 	document.querySelector('#dialog-colour').removeAttribute('open');
@@ -534,6 +792,38 @@ function openClearConfirmation(evt) {
 function clearWhiteboard(evt) {
 	sendMessage('clear', '');
 	closeDialog(evt);
+}
+
+function openSettingsDialog() {
+	document.querySelector('#dialog-settings').setAttribute('open', '');
+}
+
+function loadTheme() {
+	let match = document.cookie.match(/theme=(.+?)(;|$)/);
+
+	if (match) {
+		setTheme(match[1]);
+	} else {
+		setTheme('light');
+	}
+}
+
+function toggleTheme(evt) {
+	let body = document.querySelector('body');
+	let theme = body.getAttribute('theme');
+	if (theme === 'light') {
+		setTheme('dark');
+	} else {
+		setTheme('light');
+	}
+}
+
+function setTheme(theme) {
+	let body = document.querySelector('body');
+	body.setAttribute('theme', theme);
+	document.cookie = `theme=${theme};max-age=8640000;sameSite=strict`;
+	context.theme = theme;
+	context.needRedraw = true;
 }
 
 function closeDialog(evt) {
@@ -611,22 +901,48 @@ function receiveMessage(evt) {
 			state.elements[id] = element;
 		}
 		*/
-        for (let i = 0; i < message.data.length; i++) {
-            let element = message.data[i];
+		for (let i = 0; i < message.data.length; i++) {
+			let element = message.data[i];
 			// [id, type, "content", bounds...]
-			state.elements[element[0]] = JSON.parse(element[2]);
+			if (element[1] === 'image') {
+				let elem = JSON.parse(element[2]);
+				let hash = cyrb53(elem.body.slice(-128));
+
+				state.images[hash] = new Image();
+				state.images[hash].onload = function() {
+					context.needRedraw = true;
+				};
+				state.images[hash].src = elem.body;
+				
+				elem.body = [elem.bounds.lower_x, elem.bounds.lower_y, hash];
+				state.elements[element[0]] = elem;
+			} else {
+				state.elements[element[0]] = JSON.parse(element[2]);
+			}
 		}
 		context.needRedraw = true;
 	} else if (message.type === 'added') {
 		let ids = [];
 		for (let i = 0; i < message.data.elements.length; i++) {
 			let element = message.data.elements[i];
-			state.elements[element.id] = element.element;
+			if (element.element.type === 'image') {
+				let elem = element.element;
+				let hash = cyrb53(elem.body.slice(-128));
+
+				state.images[hash] = new Image();
+				state.images[hash].src = elem.body;
+				
+				elem.body = [elem.bounds.lower_x, elem.bounds.lower_y, hash];
+				state.elements[element.id] = elem;
+			} else {
+				state.elements[element.id] = element.element;
+			}
 			ids.push(element.id);
 			if (message.origin === state.whoami && message.data.select) {
 				state.selected.add(element.id);
 			}
 		}
+		toggleSelectionToolbar();
 		if (message.origin === state.whoami) {
 			let action = {type: 'added', data: ids};
 			if (message.data.undo) {
@@ -646,15 +962,21 @@ function receiveMessage(evt) {
 			let elements = [];
 			for (let i = 0; i < message.data.ids.length; i++) {
 				let element_id = message.data.ids[i];
-				elements.push(state.elements[element_id]);
+				if (state.elements[element_id] && state.elements[element_id].type === 'image') {
+					// no undo for image deletion
+				} else {
+					elements.push(state.elements[element_id]);
+				}
 			}
-			let action = {type: 'deleted', data: elements};
-			if (message.data.undo) {
-				state.redostack.push(action);
-			} else {
-				state.undostack.push(action);
+			if (elements.length > 0) {
+				let action = {type: 'deleted', data: elements};
+				if (message.data.undo) {
+					state.redostack.push(action);
+				} else {
+					state.undostack.push(action);
+				}
+				updateState();
 			}
-			updateState();
 		} else {
 			for (let i = 0; i < message.data.ids.length; i++) {
 				let element_id = message.data.ids[i];
@@ -677,6 +999,11 @@ function receiveMessage(evt) {
 		}
 		for (let i = 0; i < message.data.ids.length; i++) {
 			let element_id = message.data.ids[i];
+			/*if (state.elements[element_id].type === 'image') {
+				// TODO consider refcounting, either way it's probably fine this way,
+				// just refresh, forehead
+				// delete state.images[state.elements[element_id].body[2]];
+			}*/
 			state.selected.delete(element_id);
 			delete state.elements[element_id];
 		}
@@ -689,23 +1016,34 @@ function receiveMessage(evt) {
 				let [old_id, new_id] = message.data.idmap[i];
 				state.selected.add(new_id);
 			}
+			let action = {type: 'moved', data: message.data}; // {idmap: [[a,b],..], offset: [x,y]}
+			if (message.data.undo) {
+				state.redostack.push(action);
+			} else {
+				state.undostack.push(action);
+			}
+			updateState();
 		} else {
 			state.ongoing[message.origin].type = 'none';
 			delete state.ongoing[message.origin].data;
+
+			// TODO clean up undo history with idmap or w/e, like with delete
 		}
 		for (let i = 0; i < message.data.idmap.length; i++) {
 			let [old_id, new_id] = message.data.idmap[i];
 			state.elements[new_id] = state.elements[old_id];
-            state.selected.delete(old_id);
+			state.selected.delete(old_id);
 			delete state.elements[old_id];
 			let element = state.elements[new_id];
 			if (element.type === 'line' || element.type === 'smooth') {
 				element.body = element.body.map(function(x, i) {
 					return x - message.data.offset[i % 2];
 				});
-			} else if (element.type === 'ellipse') {
+			} else if (element.type === 'ellipse' || element.type === 'image') {
 				element.body[0] -= message.data.offset[0];
 				element.body[1] -= message.data.offset[1];
+			} else {
+				console.error('moving is not handled for type', element.type);
 			}
 			element.bounds.lower_x -= message.data.offset[0];
 			element.bounds.lower_y -= message.data.offset[1];
@@ -717,6 +1055,7 @@ function receiveMessage(evt) {
 		state.elements = {};
 		state.undostack = [];
 		state.redostack = [];
+		state.images = {};
 		updateState();
 		context.needRedraw = true;
 	} else if (message.type === 'ongoing') {
@@ -737,14 +1076,20 @@ function receiveMessage(evt) {
 					ongoing.data.body = update.data.body;
 				} else if (update.type === 'move' || update.type === 'copy') {
 					ongoing.data.offset = update.data.offset;
+				} else {
+					console.error('ongoing update is not handled for type', element.type);
 				}
-
 			}
 		}
 		context.needRedraw = true;
-    } else if (message.type === 'matches') {
-        if (message.data.type === 'eraser') {
-			tools.eraser.findIntersections(message.data.line, message.data.ids);
+	} else if (message.type === 'matches') {
+		if (message.data.type === 'eraser') {
+			let intersects = tools.eraser.findIntersections(message.data.line, message.data.ids);
+			if (intersects.length > 0) {
+				sendMessage('del', {ids: intersects, undo: false});
+				state.redostack.length = 0;
+				updateState();
+			}
 		} else if (message.data.type === 'select' || message.data.type === 'expand') {
 			if (message.data.type === 'select') {
 				state.selected.clear();
@@ -758,6 +1103,14 @@ function receiveMessage(evt) {
 				state.selected.delete(message.data.ids[i]);
 			}
 			toggleSelectionToolbar();
+		} else if (message.data.type === 'pipette') {
+			let intersects = tools.eraser.findIntersections(message.data.line, message.data.ids);
+			intersects = intersects.filter((e) => e.type !== 'image');
+			if (intersects.length > 0) {
+				let randIndex = Math.floor(Math.random() * intersects.length);
+				let selectedElement = state.elements[intersects[randIndex]];
+				setDrawingColour(selectedElement.colour);
+			}
 		}
 		context.needRedraw = true;
 	} else {
@@ -933,8 +1286,8 @@ let tools = {
 		},
 	},
 	eraser: {
-        // for proper eraser performance, this needs to be at least half
-        // of the maximum element diameter, otherwise points will not be gotten properly
+		// for proper eraser performance, this needs to be at least half
+		// of the maximum element diameter, otherwise points will not be gotten properly
 		padding: 12,
 		findMatches: throttle(20/* ms */, function() {
 			sendMessage('query', {
@@ -958,11 +1311,7 @@ let tools = {
 					}
 				}
 			}
-			if (intersects.length > 0) {
-				sendMessage('del', {ids: intersects, undo: false});
-				state.redostack.length = 0;
-				updateState();
-			}
+			return intersects;
 		},
 		onDown: function(evt) {
 			state.local().type = 'eraser';
@@ -1015,6 +1364,33 @@ let tools = {
 		},
 	},
 	move: {
+		moveElements: function(ids, offset, keepId) {
+			let elements = [];
+			for (const id of ids) {
+				let element = JSON.parse(JSON.stringify(state.elements[id]));
+				if (element.type === 'line' || element.type === 'smooth') {
+					element.body = element.body.map((x, i) => x - offset[i % 2]);
+				} else if (element.type === 'ellipse') {
+					element.body[0] -= offset[0];
+					element.body[1] -= offset[1];
+				} else if (element.type === 'image') {
+					element.body = state.images[element.body[2]].src;
+				} else {
+					console.error('moving is not handled for elements of type', element.type);
+				}
+				element.bounds.lower_x -= offset[0];
+				element.bounds.lower_y -= offset[1];
+				element.bounds.upper_x -= offset[0];
+				element.bounds.upper_y -= offset[1];
+
+				if (keepId) {
+					elements.push([id, element]);
+				} else {
+					elements.push(element);
+				}
+			}
+			return elements;
+		},
 		onDown: function(evt) {
 			state.local().type = 'move';
 			state.local().data = {
@@ -1047,27 +1423,13 @@ let tools = {
 				state.local().data.points[0] - state.local().data.points[2],
 				state.local().data.points[1] - state.local().data.points[3]
 			];
-			let elements = [];
-			for (const id of state.local().data.ids) {
-				let element = JSON.parse(JSON.stringify(state.elements[id]));
-				if (element.type === 'line' || element.type === 'smooth') {
-					element.body = element.body.map(function(x, i) {
-						return x - state.local().data.offset[i % 2];
-					});
-				} else if (element.type === 'ellipse') {
-					element.body[0] -= state.local().data.offset[0];
-					element.body[1] -= state.local().data.offset[1];
-				}
-				element.bounds.lower_x -= state.local().data.offset[0];
-				element.bounds.lower_y -= state.local().data.offset[1];
-				element.bounds.upper_x -= state.local().data.offset[0];
-				element.bounds.upper_y -= state.local().data.offset[1];
-				
-				elements.push([id, element]);
-			}
+			
+			let elements = tools.move.moveElements(state.local().data.ids, state.local().data.offset, true);
+			
 			sendMessage('move', {
 				elements: elements,
 				offset: state.local().data.offset,
+				undo: false,
 			});
 
 			/*
@@ -1117,24 +1479,9 @@ let tools = {
 				state.local().data.points[0] - state.local().data.points[2],
 				state.local().data.points[1] - state.local().data.points[3]
 			];
-			let elements = [];
-			for (const id of state.local().data.ids) {
-				let element = JSON.parse(JSON.stringify(state.elements[id]));
-				if (element.type === 'line' || element.type === 'smooth') {
-					element.body = element.body.map(function(x, i) {
-						return x - state.local().data.offset[i % 2];
-					});
-				} else if (element.type === 'ellipse') {
-					element.body[0] -= state.local().data.offset[0];
-					element.body[1] -= state.local().data.offset[1];
-				}
-				element.bounds.lower_x -= state.local().data.offset[0];
-				element.bounds.lower_y -= state.local().data.offset[1];
-				element.bounds.upper_x -= state.local().data.offset[0];
-				element.bounds.upper_y -= state.local().data.offset[1];
-
-				elements.push(element);
-			}
+			
+			let elements = tools.move.moveElements(state.local().data.ids, state.local().data.offset, false);
+			
 			sendMessage('add', {
 				elements: elements,
 				undo: false,
@@ -1169,6 +1516,21 @@ let tools = {
 			context.offsetX += (evt.offsetX - tools.pan.prevX) * window.devicePixelRatio;
 			context.offsetY += (evt.offsetY - tools.pan.prevY) * window.devicePixelRatio;
 		},
+	},
+	pipette: {
+		padding: 4,
+		onDown: function(evt) {
+			let [x, y] = context.abs(evt.offsetX, evt.offsetY);
+			
+			sendMessage('query', {
+				body: [x, y, x, y],
+				padding: tools.pipette.padding,
+				type: 'pipette',
+				contain: false,
+			});
+		},
+		onMove: function(evt) {},
+		onUp: function(evt) {},
 	},
 };
 
@@ -1326,8 +1688,12 @@ function separatingAxesIntersection(eraser, element) {
 	} else if (element.type === 'ellipse') {
 		[elementAxes, elementVerts] = convertToPoly[element.type](points, radius);
 		return testSeparatedAxes(eraserVerts, elementVerts, eraserAxes.concat(elementAxes));
+	} else if (element.type === 'image') {
+		console.log('due to how I want images to be used on here, I\'m not allowing eraser interaction');
+		return false;
 	} else {
-		console.log('unknown element type ' + element.type + ', can\'t erase');
+		console.error('erasing is not handled for type', element.type);
+		return false;
 	}
 }
 
@@ -1452,6 +1818,10 @@ let drawObject = {
 		ctx.ellipse(x, y, rX, rY, 0, 0, 2 * Math.PI);
 		ctx.stroke();
 	},
+	image: function(ctx, body) {
+		let [x, y, hash] = body;
+		ctx.drawImage(state.images[hash], x, y);
+	},
 };
 
 function draw() {
@@ -1523,16 +1893,13 @@ function draw() {
 	ctx.lineJoin = 'round';
 	ctx.lineCap = 'round';
 
+	let ongoingSelect;
 	let ongoingDraw = [];
 	let ongoingMove = {};
 	for (const [client, element] of Object.entries(state.ongoing)) {
 		if (element.type === 'select') {
 			// we only ever see our selection, no sharing
-			ctx.lineWidth = 2;
-			ctx.strokeStyle = '#000';
-			ctx.setLineDash([5, 5]);
-			drawObject.rect(ctx, element.data, 0);
-			ctx.setLineDash([]);
+			ongoingSelect = element.data;
 		} else if (element.type === 'freehand' || element.type === 'line' || element.type === 'arrow'
 			|| element.type === 'rectangle' || element.type === 'ellipse') {
 			ongoingDraw.push(element.data);
@@ -1546,11 +1913,18 @@ function draw() {
 				ongoingDraw.push(state.elements[id]);
 				ongoingMove[id] = element.data.offset;
 			}
+		} else if (element.type === 'none' || element.type === 'eraser') {
+			// all good, nothing to see here
+		} else {
+			console.error("ongoing element is not handled for type", element.type);
 		}
 	}
 	
 	for (const [id, element] of Object.entries(state.elements)) {
-		let viewport_padding = element.size + 2; // px, scaled
+		let viewport_padding = 2; // px, scaled
+		if (element.size) {
+			viewport_padding += element.size;
+		}
 		let viewport_lower_x = (0 - context.offsetX - viewport_padding) / context.scale;
 		let viewport_upper_x = (w - context.offsetX + viewport_padding) / context.scale;
 		let viewport_lower_y = (0 - context.offsetY - viewport_padding) / context.scale;
@@ -1566,6 +1940,8 @@ function draw() {
 		let inBounds = lower_x <= viewport_upper_x && upper_x >= viewport_lower_x
 					&& lower_y <= viewport_upper_y && upper_y >= viewport_lower_y;
 
+		// console.log(`${lower_x} <= ${viewport_upper_x} && ${upper_x} >= ${viewport_lower_x} && ${lower_y} <= ${viewport_upper_y} && ${upper_y} >= ${viewport_lower_y} === ${inBounds}`);
+
 		if (inBounds) {
 			// only draw elements potentially contained in viewport
 			ctx.lineWidth = element.size;
@@ -1577,12 +1953,13 @@ function draw() {
 					body = element.body.map(function(x, i) {
 						return x - ongoingMove[id][i % 2];
 					});
-				} else if (element.type === 'ellipse') {
+				} else if (element.type === 'ellipse' || element.type === 'image') {
 					body = element.body.slice();
 					body[0] -= ongoingMove[id][0];
 					body[1] -= ongoingMove[id][1];
+				} else {
+					console.error("move is not handled for type", element.type);
 				}
-
 			}
 			drawObject[element.type](ctx, body);
 		}
@@ -1593,7 +1970,6 @@ function draw() {
 			ctx.lineWidth = element.size;
 			ctx.strokeStyle = element.colour;
 			ctx.fillStyle = element.colour;
-			// TODO ongoing type
 			if (element.type) {
 				drawObject[element.type](ctx, element.body);
 			} else {
@@ -1602,11 +1978,27 @@ function draw() {
 		}
 	}
 
-	ctx.lineWidth = 1.2;
-	ctx.strokeStyle = '#666';
+	if (ongoingSelect) {
+		ctx.lineWidth = 2;
+		ctx.strokeStyle = '#000';
+		ctx.setLineDash([5, 5]);
+		drawObject.rect(ctx, ongoingSelect, 0);
+		ctx.setLineDash([]);
+	}
+
 	ctx.setLineDash([5, 5]);
 	for (const id of state.selected) {
 		let element = state.elements[id];
+		let offset = 0;
+		if (element.type === 'image') {
+			ctx.lineWidth = 2.5;
+			ctx.strokeStyle = '#f66';
+			offset = 1;
+		} else {
+			ctx.lineWidth = 1.2;
+			ctx.strokeStyle = '#666';
+			offset = element.size / 2;
+		}
 		let {lower_x, lower_y, upper_x, upper_y} = element.bounds;
 		if (ongoingMove[id]) {
 			lower_x -= ongoingMove[id][0];
@@ -1614,7 +2006,7 @@ function draw() {
 			upper_x -= ongoingMove[id][0];
 			upper_y -= ongoingMove[id][1];
 		}
-		drawObject.rect(ctx, [lower_x, lower_y, upper_x, upper_y], element.size/2);
+		drawObject.rect(ctx, [lower_x, lower_y, upper_x, upper_y], offset);
 	}
 	ctx.setLineDash([]);
 
